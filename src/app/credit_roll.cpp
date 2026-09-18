@@ -41,6 +41,8 @@ constexpr float kBrightness = 1.6f;   // linear HDR: a little over white, so it 
 
 constexpr size_t kParticleBudget = 60000;  // under render::kMaxOverlayParticles
 constexpr float  kFontPerBlock   = 20.0f; // blocks are about this fraction of the font's height
+constexpr float  kPixelLight     = 0.97f; // the blocks a shade dimmer than the text, so the two
+                                          // read apart where they meet
 constexpr float  kRoundLight     = 3.9f;  // a round glow carries this much less light than a flat
                                           // square the same size, so it is made brighter by it
 constexpr float  kSpin           = 0.95f;  // must match SPIN in shaders/blackhole.frag
@@ -240,7 +242,7 @@ void CreditRoll::BreakUp(const render::TextImage& text) {
             p.scatter[1]  = by * drift;
             p.scatter[2]  = bz * drift;
             p.radius      = 0.5f * block;
-            p.brightness  = kBrightness * coverage;
+            p.brightness  = kPixelLight * kBrightness * coverage;
             particles_.push_back(p);
             ++n;
         }
@@ -345,18 +347,13 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
             }
             std::memcpy(p.scatter, burst, sizeof(burst));
 
-            // The way it will go, fixed now from the camera it leaves. First deep into the scene
-            // while keeping to the text's place on screen (a path straight at the hole would run
-            // along the line of sight and show as a blob over it); then across to the disk on
-            // the hole's left, as seen, on the camera's side of the disk.
-            const auto  id    = static_cast<uint32_t>(&p - particles_.data());
-            const float hole  = std::sqrt(b.position[0] * b.position[0] + b.position[1] * b.position[1] +
-                                          b.position[2] * b.position[2]);
-            const float depth = 0.55f * hole;
-            const float wide  = 1.25f * depth / p.local[2];  // a little wider than the text, for the arc
+            // The way it will go, fixed now from the camera it leaves. It sets off straight back
+            // towards the hole (`via` lies half way there, so the curve leaves along that line),
+            // then bends across to the disk on the hole's left, as seen, on the camera's side.
+            const auto  id   = static_cast<uint32_t>(&p - particles_.data());
+            const float hole = std::sqrt(p.start[0] * p.start[0] + p.start[1] * p.start[1] + p.start[2] * p.start[2]);
             for (int i = 0; i < 3; ++i) {
-                p.via[i] = b.position[i] + (b.right[i] * p.local[0] + b.up[i] * p.local[1]) * wide +
-                           b.forward[i] * depth + 0.04f * hole * (Hash(id, 10 + i) - 0.5f);
+                p.via[i] = 0.5f * p.start[i] + 0.03f * hole * (Hash(id, 10 + i) - 0.5f);
             }
             const float leftAngle = std::atan2(-b.right[2], -b.right[0]);
             const float bendAngle = leftAngle + 0.5f * (Hash(id, 13) - 0.5f);

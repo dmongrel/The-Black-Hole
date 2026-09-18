@@ -92,8 +92,8 @@ After a few seconds' hold the whole line pixelates, its letters coarsening into 
 then becomes one particle, exactly where it was and just as bright, so nothing is added to the
 letters. The blocks come loose at random all over the line, drifting apart and softening into
 round glows, until the letters have dissolved. Most particles join the stream at once. About a
-fifth are heavier and hang back for a moment before the flow takes them. The stream leaves the camera behind and arcs deep into the scene,
-across to the disk on the hole's left, then spirals with the disk's rotation towards its inner
+fifth are heavier and hang back for a moment before the flow takes them. The stream leaves the camera behind, heading straight back towards the hole, then bends
+across to the disk on the hole's left and spirals with the disk's rotation towards its inner
 edge. The particles shrink, warm in colour and fade out halfway round. Near the hole they are
 lensed by an approximate point-lens bend, and they vanish behind the shadow.
 
