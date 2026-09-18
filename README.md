@@ -39,6 +39,13 @@ rotate at the Kerr orbital rate. Its colour comes from a thin-disk temperature p
 combines Doppler beaming and gravitational redshift. The shift is toned down the way the film
 toned it down.
 
+The disk's streaks are anti-aliased. Lensing squeezes the disk hard near the shadow, so one pixel
+there can cover many streaks. The tracer records each ray's disk crossings and compares them
+with the neighbouring pixels' crossings to find how much of the disk each pixel spans. Detail
+finer than that fades to its average. That count includes the extra fineness the pattern gets
+from winding up as the inner disk out-orbits the outer. Where even the disk's overall radial
+profile falls inside a few pixels, four samples are taken across the pixel.
+
 The surroundings are a skybox: a star field with faint nebulous cloud and a dust-lane band. It
 is baked on the CPU at start-up into a 2048² cubemap with mipmaps
 ([`src/render/skybox.cpp`](src/render/skybox.cpp)). The mipmaps keep the stars from sparkling
@@ -62,6 +69,13 @@ the frame each ease towards a randomly chosen value, hold there, then pick anoth
 - **Pace:** usually the original slow drift. Now and then it is two to three times faster.
 - **Distance:** close (12.5–18 M, where the disk runs off the screen and the hole is framed off
   centre), middle (22–34 M), or far (42–64 M, where the whole system sits small in the stars).
+
+Every three to six minutes the camera also breaks pattern with an event:
+
+- **Dive:** it sinks through the disk's plane, where the disk thins to a line between the arches
+  above and below the shadow, and hangs below it for a while.
+- **Overhead:** it climbs to 55–72° and looks down across the disk at the shadow.
+- **Swoop:** it goes in fast to about 9 M, well inside the disk's outer edge, then back out.
 
 The development window (`/w`) keeps the original fixed orbit, which is a function of time alone,
 so any frame can be captured again.
@@ -111,6 +125,7 @@ disk at run time.
 | `BLACK_HOLE_TIME=<seconds>` | Offset the animation clock, to capture elsewhere in the orbit (the roaming camera is stepped forward to it) |
 | `BLACK_HOLE_CAMERA=classic\|roaming` | Override the camera (`/s` roams, `/w` is classic) |
 | `BLACK_HOLE_SEED=<n>` | Fix the roaming camera's choices, so a run can be repeated |
+| `BLACK_HOLE_EVENT=dive\|overhead\|swoop` | Roaming camera: every event is this one, the first after 8 seconds |
 | `BLACK_HOLE_VALIDATE=1` | Enable the Khronos validation layer if it is installed |
 
 ## Layout

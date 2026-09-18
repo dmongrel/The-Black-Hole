@@ -23,9 +23,16 @@ CameraPose ClassicCamera(double seconds);
 // for a while, then picks another: the pace (sometimes two or three times the classic speed),
 // the distance (from close enough that the disk runs off the screen to far enough that the whole
 // system is small), the height above the disk, the roll, and where in the frame the hole sits.
+//
+// Every few minutes, on average, it also breaks pattern with an event: a dive through the disk's
+// plane to look at it from below, a climb to look down on it from high above, or a fast swoop in
+// close past the hole.
 class RoamingCamera {
 public:
-    explicit RoamingCamera(uint32_t seed);
+    enum class Event { Any, Dive, Overhead, Swoop };
+
+    // `only` restricts the events to one kind and brings the first forward, for development.
+    explicit RoamingCamera(uint32_t seed, Event only = Event::Any);
 
     // Advances by dt seconds of real time and returns the new pose.
     CameraPose Advance(double dt);
@@ -40,6 +47,7 @@ private:
     };
 
     void PickTempo();
+    bool StartEvent();
     void PickDistance();
     void PickHeight();
     void PickRoll();
@@ -47,7 +55,9 @@ private:
     float Uniform(float lo, float hi);
 
     std::mt19937 rng_;
+    Event        only_;
     float        azimuth_;
+    float        untilEvent_;  // tempo-scaled seconds
     Drift        tempo_, distance_, inclination_, roll_, aimX_, aimY_;
 };
 

@@ -206,9 +206,17 @@ std::optional<render::RoamingCamera> CameraFromEnvironment(bool roamByDefault, d
     }
     Log("camera: roaming, seed %u", seed);
 
+    // BLACK_HOLE_EVENT=dive|overhead|swoop makes every event that one, the first after 8 seconds.
+    auto only = render::RoamingCamera::Event::Any;
+    if (const char* e = std::getenv("BLACK_HOLE_EVENT")) {
+        if (std::strcmp(e, "dive") == 0) only = render::RoamingCamera::Event::Dive;
+        if (std::strcmp(e, "overhead") == 0) only = render::RoamingCamera::Event::Overhead;
+        if (std::strcmp(e, "swoop") == 0) only = render::RoamingCamera::Event::Swoop;
+    }
+
     // The roaming camera has no closed form, so a time offset is reached by stepping to it at a
     // fixed rate: the same seed and offset always land on the same pose.
-    render::RoamingCamera camera(seed);
+    render::RoamingCamera camera(seed, only);
     for (double t = 0.0; t < offset; t += 1.0 / 30.0) camera.Advance(std::min(1.0 / 30.0, offset - t));
     return camera;
 }

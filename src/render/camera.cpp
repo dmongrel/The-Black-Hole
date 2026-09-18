@@ -1,5 +1,7 @@
 #include "render/camera.h"
 
+#include "app/log.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -9,6 +11,9 @@ namespace {
 constexpr float kDegrees      = 0.017453293f;
 constexpr float kTanHalfFov   = 0.44522869f;  // tan(24 degrees)
 constexpr float kBaseOrbit    = 0.012f;       // radians per second at tempo 1, the classic pace
+
+// The disk is infinitely thin and reaches r = 17. Crossing its plane is only allowed outside it.
+constexpr float kSafeCrossing = 22.0f;
 
 float Smootherstep(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
@@ -56,7 +61,9 @@ float RoamingCamera::Drift::Value() const { return from + (to - from) * Smoother
 
 float RoamingCamera::Uniform(float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(rng_); }
 
-RoamingCamera::RoamingCamera(uint32_t seed) : rng_(seed), azimuth_(Uniform(0.0f, 6.2831853f)) {
+RoamingCamera::RoamingCamera(uint32_t seed, Event only)
+    : rng_(seed), only_(only), azimuth_(Uniform(0.0f, 6.2831853f)) {
+    untilEvent_ = only_ == Event::Any ? Uniform(150.0f, 330.0f) : 8.0f;
     // Start where the classic camera does, so the first seconds look like the saver always has,
     // and let every quantity wander off from there.
     tempo_       = {1.0f, 1.0f, 0.0f, 1.0f, Uniform(20.0f, 40.0f)};
@@ -76,8 +83,10 @@ void RoamingCamera::PickTempo() {
 
 // Close enough that the disk overflows the frame, the classic middle distance, or far enough out
 // that the hole and its disk sit small in the star field. Moves take longer the further they go.
+// Below the disk, or on the way through its plane, the camera stays outside it.
 void RoamingCamera::PickDistance() {
-    const float roll = Uniform(0.0f, 1.0f);
+    const bool  below = inclination_.from < 0.0f || inclination_.to < 0.0f;
+    const float roll  = below ? Uniform(0.25f, 1.0f) : Uniform(0.0f, 1.0f);
     const float next = roll < 0.25f ? Uniform(12.5f, 18.0f) : roll < 0.75f ? Uniform(22.0f, 34.0f) : Uniform(42.0f, 64.0f);
     const float now  = distance_.Value();
     const float move = (10.0f + 0.5f * std::fabs(next - now)) * Uniform(0.8f, 1.2f);
@@ -85,7 +94,12 @@ void RoamingCamera::PickDistance() {
 }
 
 // Mostly just above the disk, as in the film; once in a while high enough to look down on it.
+// Coming back up from a dive crosses the plane, so it waits until the camera is clear of the disk.
 void RoamingCamera::PickHeight() {
+    if (inclination_.Value() < 0.0f && std::min(distance_.from, distance_.to) < kSafeCrossing) {
+        inclination_ = {inclination_.Value(), inclination_.to, 0.0f, 1.0f, 10.0f};
+        return;
+    }
     const float next = Uniform(0.0f, 1.0f) < 0.85f ? Uniform(4.0f, 15.0f) : Uniform(18.0f, 28.0f);
     inclination_     = {inclination_.Value(), next * kDegrees, 0.0f, Uniform(12.0f, 25.0f), Uniform(5.0f, 25.0f)};
 }
@@ -106,6 +120,49 @@ void RoamingCamera::PickAim() {
     aimY_             = {aimY_.Value(), y * kDegrees, 0.0f, move, hold};
 }
 
+// Returns false when the camera is not placed for the event just now; it is tried again shortly.
+bool RoamingCamera::StartEvent() {
+    Event event = only_;
+    if (event == Event::Any) {
+        const float roll = Uniform(0.0f, 1.0f);
+        event = roll < 0.35f ? Event::Dive : roll < 0.7f ? Event::Overhead : Event::Swoop;
+    }
+    const float now       = distance_.Value();
+    const bool  above     = inclination_.from > 0.0f && inclination_.to > 0.0f;
+    const bool  clearDisk = std::min(distance_.from, distance_.to) >= kSafeCrossing;
+
+    switch (event) {
+        case Event::Dive:
+            // Down through the plane, where the disk thins to a line, to hang below it a while.
+            if (!above || !clearDisk) return false;
+            inclination_ = {inclination_.Value(), -Uniform(6.0f, 16.0f) * kDegrees, 0.0f, Uniform(18.0f, 28.0f),
+                            Uniform(25.0f, 45.0f)};
+            app::Log("camera event: dive");
+            return true;
+        case Event::Overhead:
+            // High above the disk, looking down across it at the shadow.
+            if (!above) return false;
+            inclination_ = {inclination_.Value(), Uniform(55.0f, 72.0f) * kDegrees, 0.0f, Uniform(20.0f, 30.0f),
+                            Uniform(15.0f, 30.0f)};
+            app::Log("camera event: overhead");
+            return true;
+        case Event::Swoop:
+            // In fast, well inside the disk's outer edge, and straight back out. The camera keeps
+            // above the disk all the way.
+            if (!above) return false;
+            distance_ = {now, Uniform(8.5f, 10.0f), 0.0f, Uniform(10.0f, 14.0f), Uniform(3.0f, 6.0f)};
+            if (inclination_.to < 7.0f * kDegrees || inclination_.from < 7.0f * kDegrees) {
+                inclination_ = {inclination_.Value(), Uniform(8.0f, 12.0f) * kDegrees, 0.0f, 8.0f, 20.0f};
+            }
+            tempo_ = {tempo_.Value(), Uniform(1.8f, 2.4f), 0.0f, 4.0f, Uniform(14.0f, 20.0f)};
+            app::Log("camera event: swoop");
+            return true;
+        case Event::Any:
+            break;
+    }
+    return false;
+}
+
 CameraPose RoamingCamera::Advance(double dt) {
     const float realDt = static_cast<float>(dt);
     tempo_.elapsed += realDt;
@@ -123,6 +180,15 @@ CameraPose RoamingCamera::Advance(double dt) {
     if (inclination_.Done()) PickHeight();
     if (roll_.Done()) PickRoll();
     if (aimX_.Done()) PickAim();
+
+    untilEvent_ -= step;
+    if (untilEvent_ <= 0.0f) {
+        if (StartEvent()) {
+            untilEvent_ = only_ == Event::Any ? Uniform(180.0f, 360.0f) : Uniform(60.0f, 90.0f);
+        } else {
+            untilEvent_ = 15.0f;
+        }
+    }
 
     return Pose(azimuth_, inclination_.Value(), distance_.Value(), roll_.Value(), aimX_.Value(), aimY_.Value());
 }
