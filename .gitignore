@@ -1,0 +1,26 @@
+# Build artifacts
+*.scr
+*.exe
+*.o
+*.obj
+*.res
+build/
+cmake-build-*/
+
+# Superseded scaffolding from the first attempt, kept locally for reference only
+_attic/
+
+# IDE files
+.vs/
+.idea/
+*.suo
+*.user
+
+# Captures
+*.bmp
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

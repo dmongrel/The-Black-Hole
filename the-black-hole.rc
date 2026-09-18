@@ -1,0 +1,9 @@
+#include <windows.h>
+
+// String 1 is the name Windows shows in the Screen Saver Settings list.
+STRINGTABLE
+BEGIN
+    1 "The Black Hole"
+END
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "the-black-hole.manifest"
