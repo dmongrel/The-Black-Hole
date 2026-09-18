@@ -19,7 +19,6 @@ namespace render {
 namespace {
 
 constexpr int      kFramesInFlight = 2;
-constexpr int      kSkyboxSize     = 2048;
 constexpr uint32_t kSkyboxSeed     = 0x5eed1234u;
 
 // The traced image and the bloom chain. Both uses (colour attachment and sampled for the HDR
@@ -264,7 +263,7 @@ struct Renderer::Impl {
 
     // -- set-up --------------------------------------------------------------------------------
 
-    void Init() {
+    void Init(int skyboxSize) {
         Check(volkInitialize(), "loading vulkan-1.dll");
 
         VkApplicationInfo appInfo{};
@@ -335,7 +334,7 @@ struct Renderer::Impl {
         sci.maxLod       = VK_LOD_CLAMP_NONE;
         Check(vkCreateSampler(device, &sci, nullptr, &sampler), "vkCreateSampler");
 
-        CreateSkybox();
+        CreateSkybox(skyboxSize);
         CreateLayouts();
         CreateScenePipeline();
         downPipeline = CreateComputePipeline("bloom_down.comp");
@@ -499,8 +498,8 @@ struct Renderer::Impl {
         vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
     }
 
-    void CreateSkybox() {
-        const SkyboxImage  sky   = GenerateSkybox(kSkyboxSize, kSkyboxSeed);
+    void CreateSkybox(int size) {
+        const SkyboxImage  sky   = GenerateSkybox(size, kSkyboxSeed);
         const VkDeviceSize bytes = sky.texels.size() * sizeof(uint32_t);
         const uint32_t     levels = static_cast<uint32_t>(sky.levels);
         app::Log("skybox: %d^2 x 6, %d levels generated", sky.size, sky.levels);
@@ -1212,10 +1211,10 @@ struct Renderer::Impl {
 Renderer::Renderer(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Renderer::~Renderer() = default;
 
-std::unique_ptr<Renderer> Renderer::Create() {
+std::unique_ptr<Renderer> Renderer::Create(int skyboxSize) {
     try {
         auto impl = std::make_unique<Impl>();
-        impl->Init();
+        impl->Init(skyboxSize);
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     } catch (const std::exception& e) {
         app::Log("vulkan unavailable: %s", e.what());

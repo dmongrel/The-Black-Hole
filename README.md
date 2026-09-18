@@ -111,7 +111,7 @@ disk at run time.
 |----------|-----------|
 | (none) or `/s` | Full screen on every monitor; any key, click or mouse movement ends it |
 | `/w` | A resizable window, for development, on the fixed camera; Esc closes it |
-| `/p <hwnd>` | Preview pane of the Screen Saver Settings dialog (currently black) |
+| `/p <hwnd>` | Live preview in the Screen Saver Settings dialog (roaming camera, smaller star map for a quick start) |
 | `/c` | Settings (there are none yet) |
 | anything else | Exits immediately |
 

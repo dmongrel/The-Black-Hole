@@ -12,7 +12,8 @@ int RunFullScreen(HINSTANCE instance);
 // /w: a normal resizable window for development. Esc or closing it ends the run.
 int RunWindowed(HINSTANCE instance);
 
-// /p <hwnd>: a black child of the Screen Saver Settings preview pane, gone when the pane is.
+// /p <hwnd>: the black hole, live, in a child of the Screen Saver Settings preview pane; gone
+// when the pane is.
 int RunPreview(HINSTANCE instance, HWND parent);
 
 // /c: there are no settings yet, so this says so.

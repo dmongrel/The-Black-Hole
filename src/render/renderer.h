@@ -20,7 +20,9 @@ namespace render {
 class Renderer {
 public:
     // Returns nullptr when Vulkan is missing or unusable. Never throws, never shows UI.
-    static std::unique_ptr<Renderer> Create();
+    // `skyboxSize` is the star field's cube face edge in texels: 2048 for a monitor, far less
+    // for the Settings dialog's thumbnail, where baking the full one would only delay it.
+    static std::unique_ptr<Renderer> Create(int skyboxSize = 2048);
     ~Renderer();
 
     Renderer(const Renderer&)            = delete;

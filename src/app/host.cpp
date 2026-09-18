@@ -384,7 +384,12 @@ LRESULT CALLBACK PreviewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }  // namespace
 
 int RunPreview(HINSTANCE instance, HWND parent) {
-    if (!RegisterClassOnce(instance, kPreviewClass, PreviewProc)) return 0;
+    HostState host;
+    g_host = &host;
+    if (!RegisterClassOnce(instance, kPreviewClass, PreviewProc)) {
+        g_host = nullptr;
+        return 0;
+    }
 
     RECT rc{};
     GetClientRect(parent, &rc);
@@ -392,13 +397,15 @@ int RunPreview(HINSTANCE instance, HWND parent) {
                                 rc.bottom, parent, nullptr, instance, nullptr);
     if (hwnd) {
         SetTimer(hwnd, kParentWatchTimer, 250, nullptr);
-        MSG msg{};
-        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        host.windows.push_back(hwnd);
+        // The pane is a thumbnail: a small star field bakes in a fraction of the time, and the
+        // dialog shows the preview that much sooner.
+        host.renderer = render::Renderer::Create(1024);
+        Log("renderer: %s", host.renderer ? "vulkan" : "none (black preview)");
+        if (host.renderer && !host.renderer->AttachWindow(hwnd)) host.renderer.reset();
+        RenderLoop(host, true);  // the preview shows what the screen saver will: roaming
     }
-    UnregisterClassW(kPreviewClass, instance);
+    Teardown(host, instance, kPreviewClass);
     return 0;
 }
 
