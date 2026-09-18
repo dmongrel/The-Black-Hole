@@ -1,8 +1,11 @@
 # Plan: movie-credit text that breaks into particles
 
-Status: built (2026-09-18). After review, the break-up sweep was slowed to 2.5 s, about a fifth of the
-particles hang back 0.8–2.4 s before the flow takes them, and particles fade out halfway round the
-spiral onto the disk.
+Status: built (2026-09-18). Changes after review:
+- The left-to-right break-up sweep is replaced. The whole line pixelates over 1.2 s, and then
+  each block becomes one particle, with nothing added. The blocks come loose at random over 1.5 s,
+  so the letters dissolve.
+- About a fifth of the particles hang back 0.8–2.4 s before the flow takes them.
+- Particles fade out halfway round the spiral onto the disk.
 
 ## What it does
 

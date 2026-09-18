@@ -1,7 +1,7 @@
 #version 450
 
-// One particle of a broken-up credit: a small round glow at a world position, drawn as two
-// triangles facing the camera.
+// One particle of a broken-up credit at a world position, drawn as two triangles facing the
+// camera: a flat square block of the pixelated text at first, softening into a round glow.
 //
 // The ray tracer bends every pixel's light through the hole's spacetime; that is far too costly
 // per particle, so the particle's direction is bent with the point-lens approximation instead.
@@ -12,7 +12,7 @@
 // stream arches round the hole the way the disk does.
 
 layout(location = 0) in vec4 inPositionSize;  // world xyz, radius in pixels
-layout(location = 1) in vec4 inLight;         // brightness, heat, unused, unused
+layout(location = 1) in vec4 inLight;         // brightness, heat, square, unused
 
 layout(push_constant) uniform Push {
     vec4 camPos;    // xyz, w = tan(vertical fov / 2)
@@ -23,6 +23,7 @@ layout(push_constant) uniform Push {
 
 layout(location = 0) out vec2 vCorner;
 layout(location = 1) out vec3 vColor;
+layout(location = 2) out float vSquare;
 
 const float SHADOW_B   = 5.2;   // critical impact parameter, about 3 sqrt(3) M
 const vec3  WARM_WHITE = vec3(1.0, 0.93, 0.82);
@@ -32,6 +33,7 @@ void main() {
     const vec2 corners[6] = vec2[6](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
                                     vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));
     vCorner = corners[gl_VertexIndex];
+    vSquare = inLight.z;
 
     vec3  cam  = pc.camPos.xyz;
     vec3  d    = inPositionSize.xyz - cam;

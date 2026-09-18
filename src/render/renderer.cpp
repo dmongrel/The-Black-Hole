@@ -63,7 +63,7 @@ struct BloomPush {
 // Must match shaders/text.vert and text.frag.
 struct TextPush {
     float rect[4];
-    float params[4];  // scale, alpha, sweep, aspect
+    float params[4];  // scale, alpha, block, aspect
     float more[4];    // tan(fov / 2), brightness, unused, unused
 };
 
@@ -904,7 +904,7 @@ struct Renderer::Impl {
             std::memcpy(p.rect, overlay.rect, sizeof(p.rect));
             p.params[0] = overlay.scale;
             p.params[1] = overlay.alpha;
-            p.params[2] = overlay.sweep;
+            p.params[2] = overlay.block;
             p.params[3] = scene.camRight[3];
             p.more[0]   = scene.camPos[3];
             p.more[1]   = overlay.brightness;

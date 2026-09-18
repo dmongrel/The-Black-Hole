@@ -24,8 +24,9 @@ struct OverlayParticle {
     float position[3];
     float radius;  // pixels
     float brightness;
-    float heat;  // 0 as it leaves the text, 1 as it reaches the disk: tints it towards the disk
-    float pad[2];
+    float heat;    // 0 as it leaves the text, 1 as it reaches the disk: tints it towards the disk
+    float square;  // 1: a flat square block of the pixelated text; 0: a soft round glow
+    float pad;
 };
 static_assert(sizeof(OverlayParticle) == 32);
 
@@ -42,7 +43,7 @@ struct Overlay {
     float            scale      = 1.0f;
     float            alpha      = 0.0f;
     float            brightness = 1.0f;
-    float            sweep      = -1.0f;  // texels left of this u have broken away (-1: none)
+    float            block      = 1.0f;  // drawn pixelated in blocks this many texels wide (1: as set)
 
     std::vector<OverlayParticle> particles;
 };

@@ -16,7 +16,8 @@ constexpr double kFirstDelay = 3.0;   // the black hole alone first
 constexpr double kFlyIn      = 3.0;
 constexpr double kHoldOne    = 3.0;   // a single line
 constexpr double kHoldTwo    = 4.0;   // two lines take longer to read
-constexpr double kSweep      = 2.5;   // the break-up running across the text, unhurried
+constexpr double kPixelate   = 1.2;   // the letters coarsening into blocks
+constexpr float  kDissolve   = 1.5f;  // the blocks coming loose, at random all over the line
 constexpr float  kFlightMin  = 5.8;   // each particle's trip to the disk. Spread wide, so the
 constexpr float  kFlightMax  = 8.8;   // cloud strings out into a stream along the path
 constexpr float  kHeavy      = 0.22f; // of the particles: they hang back before the flow takes them
@@ -37,8 +38,9 @@ constexpr float kMaxWidth   = 0.80f;  // of the screen's width; longer credits a
 constexpr float kBrightness = 1.6f;   // linear HDR: a little over white, so it blooms slightly
 
 constexpr size_t kParticleBudget = 30000;
-constexpr int    kPerInkedPixel  = 4;     // at most; a thin light face has little ink to share out
-constexpr float  kParticleLight  = 2.6f;  // relative to the text: sparse once spread, so brighter
+constexpr float  kFontPerBlock   = 13.0f; // blocks are about this fraction of the font's height
+constexpr float  kRoundLight     = 3.9f;  // a round glow carries this much less light than a flat
+                                          // square the same size, so it is made brighter by it
 constexpr float  kSpin           = 0.95f;  // must match SPIN in shaders/blackhole.frag
 
 float Smoothstep(float a, float b, float x) {
@@ -87,7 +89,7 @@ HFONT MakeFont(int pixels) {
 }
 
 // The credit's lines, left-justified, as 8-bit coverage.
-render::TextImage Rasterize(const Credit& credit, int screenWidth, int screenHeight, uint32_t id) {
+render::TextImage Rasterize(const Credit& credit, int screenWidth, int screenHeight, uint32_t id, int& fontPixels) {
     const std::wstring* lines[2] = {&credit.first, &credit.second};
     const int           count    = credit.second.empty() ? 1 : 2;
 
@@ -149,6 +151,7 @@ render::TextImage Rasterize(const Credit& credit, int screenWidth, int screenHei
     }
     DeleteObject(font);
     DeleteDC(dc);
+    fontPixels = pixels;
     return image;
 }
 
@@ -162,71 +165,69 @@ float CreditRoll::HoldSeconds() const {
 }
 
 float CreditRoll::CreditSeconds() const {
-    return static_cast<float>(kFlyIn + HoldSeconds() + kSweep + 0.05 + kLingerMax + kFlightMax * kGone + kGap);
+    return static_cast<float>(kFlyIn + HoldSeconds() + kPixelate + kDissolve + kLingerMax + kFlightMax * kGone + kGap);
 }
 
 void CreditRoll::StartCredit(size_t index) {
     index_    = index;
     brokenUp_ = false;
     particles_.clear();
-    text_ = Rasterize(credits_[index_], width_, height_, nextTextId_++);
-    Log("credits: %u of %u, %dx%d px", static_cast<unsigned>(index_ + 1), static_cast<unsigned>(credits_.size()),
-        text_.width, text_.height);
+    int fontPixels = 0;
+    text_          = Rasterize(credits_[index_], width_, height_, nextTextId_++, fontPixels);
+
+    // Blocks big enough to read as pixelation at this size, and few enough for the budget.
+    size_t inked = 0;
+    for (uint8_t c : text_.coverage) inked += c > 0;
+    block_ = std::max(3, static_cast<int>(std::lround(fontPixels / kFontPerBlock)));
+    while (inked / static_cast<size_t>(block_ * block_) > kParticleBudget) ++block_;
+    Log("credits: %u of %u, %dx%d px, blocks of %d", static_cast<unsigned>(index_ + 1),
+        static_cast<unsigned>(credits_.size()), text_.width, text_.height, block_);
 }
 
 void CreditRoll::BreakUp(const render::TextImage& text) {
-    // Particles on a grid over the glyphs, the cells as small as the budget allows, and several
-    // to a cell (scattered within it) when there is budget to spare.
-    size_t inked = 0;
-    for (uint8_t c : text.coverage) inked += c > 64;
-    int step = 1;
-    while (inked / static_cast<size_t>(step * step) > kParticleBudget) ++step;
-    const int perCell = std::clamp(static_cast<int>(kParticleBudget / std::max<size_t>(inked, 1)), 1, kPerInkedPixel);
-
+    // One particle for each block of the pixelated text, where the block is and as bright as it
+    // is drawn (the same average as shaders/text.frag), so the letters themselves come apart and
+    // nothing is added that was not there.
+    const int   block = block_;
     const float left = restRect_[0], top = restRect_[1], right = restRect_[2], bottom = restRect_[3];
 
     uint32_t n = 0;
-    for (int y = 0; y < text.height; y += step) {
-        for (int x = 0; x < text.width; x += step) {
+    for (int y = 0; y < text.height; y += block) {
+        for (int x = 0; x < text.width; x += block) {
             float sum = 0.0f;
-            int   cells = 0;
-            for (int yy = y; yy < std::min(y + step, text.height); ++yy) {
-                for (int xx = x; xx < std::min(x + step, text.width); ++xx) {
+            for (int yy = y; yy < std::min(y + block, text.height); ++yy) {
+                for (int xx = x; xx < std::min(x + block, text.width); ++xx) {
                     sum += text.coverage[static_cast<size_t>(yy) * text.width + xx] / 255.0f;
-                    ++cells;
                 }
             }
-            const float coverage = sum / cells;
-            if (coverage < 0.2f) continue;
+            const float coverage = sum / static_cast<float>(block * block);
+            if (coverage < 0.02f) continue;
 
-            for (int k = 0; k < perCell; ++k) {
-                const float u = (x + step * (perCell == 1 ? 0.5f : Hash(n, 8))) / text.width;
-                const float v = (y + step * (perCell == 1 ? 0.5f : Hash(n, 9))) / text.height;
-                Particle    p;
-                p.local[0] = (left + u * (right - left)) * kRestDepth;
-                p.local[1] = (top + v * (bottom - top)) * kRestDepth;
-                p.local[2] = kRestDepth;
-                p.u        = u;
-                p.release  = static_cast<float>(u * kSweep) + 0.05f * Hash(n, 0);
-                p.flight   = kFlightMin + (kFlightMax - kFlightMin) * Hash(n, 1);
-                const bool heavy = Hash(n, 16) < kHeavy;
-                p.linger   = heavy ? kLingerMin + (kLingerMax - kLingerMin) * Hash(n, 15) : 0.0f;
-                p.turn     = 2.0f + 1.5f * Hash(n, 2);
-                p.phase    = u * 9.0f + v * 3.0f + 0.6f * Hash(n, 3);
-                // The burst as it comes loose: a small random push, mostly back from the viewer.
-                const float bx = Hash(n, 4) - 0.5f, by = Hash(n, 5) - 0.5f, bz = Hash(n, 6);
-                const float burst = (0.06f + 0.08f * Hash(n, 7)) * kRestDepth;
-                p.scatter[0]  = bx * burst;
-                p.scatter[1]  = by * burst;
-                p.scatter[2]  = bz * burst;
-                p.radius      = (0.9f + 0.5f * step) * (heavy ? 1.35f : 1.0f);
-                p.brightness  = kBrightness * kParticleLight * coverage / perCell;
-                particles_.push_back(p);
-                ++n;
-            }
+            const float u = (x + 0.5f * block) / text.width;
+            const float v = (y + 0.5f * block) / text.height;
+            Particle    p;
+            p.local[0] = (left + u * (right - left)) * kRestDepth;
+            p.local[1] = (top + v * (bottom - top)) * kRestDepth;
+            p.local[2] = kRestDepth;
+            p.release  = kDissolve * Hash(n, 0);  // anywhere along the line, not in order
+            p.flight   = kFlightMin + (kFlightMax - kFlightMin) * Hash(n, 1);
+            p.linger   = Hash(n, 16) < kHeavy ? kLingerMin + (kLingerMax - kLingerMin) * Hash(n, 15) : 0.0f;
+            p.turn     = 2.0f + 1.5f * Hash(n, 2);
+            p.phase    = u * 9.0f + v * 3.0f + 0.6f * Hash(n, 3);
+            // As it comes loose it drifts a little away from its neighbours, mostly across the
+            // screen, so the letters look drawn apart.
+            const float bx = Hash(n, 4) - 0.5f, by = Hash(n, 5) - 0.5f, bz = 0.3f * Hash(n, 6);
+            const float drift = (0.012f + 0.02f * Hash(n, 7)) * kRestDepth;
+            p.scatter[0]  = bx * drift;
+            p.scatter[1]  = by * drift;
+            p.scatter[2]  = bz * drift;
+            p.radius      = 0.5f * block;
+            p.brightness  = kBrightness * coverage;
+            particles_.push_back(p);
+            ++n;
         }
     }
-    Log("credits: broke into %u particles (grid %d px)", n, step);
+    Log("credits: broke into %u particles (blocks of %d px)", n, block);
 }
 
 const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPose& camera) {
@@ -264,7 +265,7 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
 
     std::memcpy(overlay_.rect, restRect_, sizeof(restRect_));
     overlay_.brightness = kBrightness;
-    overlay_.sweep      = -1.0f;
+    overlay_.block      = 1.0f;
     overlay_.scale      = 1.0f;
     overlay_.alpha      = 1.0f;
 
@@ -285,23 +286,36 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
         return overlay_;
     }
 
-    // Breaking up.
+    // Breaking up. First the letters pixelate, the blocks growing to their full size.
+    const double sinceBreak = local - breakAt;
+    if (sinceBreak < kPixelate) {
+        overlay_.text  = &text_;
+        overlay_.block = 1.0f + std::floor(static_cast<float>(sinceBreak / kPixelate) * static_cast<float>(block_));
+        return overlay_;
+    }
+    // Then each block is a particle, and they come loose.
     if (!brokenUp_) {
         brokenUp_ = true;
         BreakUp(text_);
     }
-    const double sinceBreak = local - breakAt;
-    if (sinceBreak < kSweep * 1.1) {
-        overlay_.text  = &text_;
-        overlay_.sweep = static_cast<float>(sinceBreak / kSweep);
-    }
 
     const render::CameraBasis b     = render::Basis(camera);
     const float               inner = InnerEdge() * 1.03f;
-    const double              t0    = start_ + breakAt;
+    const double              t0    = start_ + breakAt + kPixelate;
     for (Particle& p : particles_) {
         const double releaseAt = t0 + p.release;
-        if (seconds < releaseAt) continue;
+        render::OverlayParticle out{};
+        if (seconds < releaseAt) {
+            // Still a block of its letter, fixed to the camera.
+            for (int i = 0; i < 3; ++i) {
+                out.position[i] = b.position[i] + b.right[i] * p.local[0] + b.up[i] * p.local[1] + b.forward[i] * p.local[2];
+            }
+            out.radius     = p.radius;
+            out.brightness = p.brightness;
+            out.square     = 1.0f;
+            overlay_.particles.push_back(out);
+            continue;
+        }
         if (!p.released) {
             // It leaves the camera here: from now on it is in the world, where the hole is.
             p.released   = true;
@@ -317,31 +331,37 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
             // while keeping to the text's place on screen (a path straight at the hole would run
             // along the line of sight and show as a blob over it); then across to the disk on
             // the hole's left, as seen, on the camera's side of the disk.
+            const auto  id    = static_cast<uint32_t>(&p - particles_.data());
             const float hole  = std::sqrt(b.position[0] * b.position[0] + b.position[1] * b.position[1] +
                                           b.position[2] * b.position[2]);
             const float depth = 0.55f * hole;
-            const float out   = 1.25f * depth / p.local[2];  // a little wider than the text, for the arc
+            const float wide  = 1.25f * depth / p.local[2];  // a little wider than the text, for the arc
             for (int i = 0; i < 3; ++i) {
-                p.via[i] = b.position[i] + (b.right[i] * p.local[0] + b.up[i] * p.local[1]) * out +
-                           b.forward[i] * depth + 0.04f * hole * (Hash(static_cast<uint32_t>(&p - particles_.data()), 10 + i) - 0.5f);
+                p.via[i] = b.position[i] + (b.right[i] * p.local[0] + b.up[i] * p.local[1]) * wide +
+                           b.forward[i] * depth + 0.04f * hole * (Hash(id, 10 + i) - 0.5f);
             }
             const float leftAngle = std::atan2(-b.right[2], -b.right[0]);
-            const float bendAngle = leftAngle + 0.5f * (Hash(static_cast<uint32_t>(&p - particles_.data()), 13) - 0.5f);
-            const float bendR     = 7.5f + 2.5f * Hash(static_cast<uint32_t>(&p - particles_.data()), 14);
+            const float bendAngle = leftAngle + 0.5f * (Hash(id, 13) - 0.5f);
+            const float bendR     = 7.5f + 2.5f * Hash(id, 14);
             p.bend[0]             = bendR * std::cos(bendAngle);
             p.bend[1]             = std::copysign(0.6f, b.position[1]);
             p.bend[2]             = bendR * std::sin(bendAngle);
             p.endAngle            = bendAngle + p.turn;
         }
-        // A heavy one drifts loose and hangs there, the stream pulling past it, before it goes.
+
+        // Loose, the block softens into a round glow carrying the same light.
         const float since = static_cast<float>(seconds - p.releasedAt);
-        const float drift = p.linger > 0.0f ? 0.7f * (1.0f - std::exp(-2.5f * std::min(since, p.linger))) : 0.0f;
-        render::OverlayParticle out{};
+        const float round = Smoothstep(0.0f, 0.8f, since);
+        const float light = p.brightness * (1.0f + (kRoundLight - 1.0f) * round);
+        out.square        = 1.0f - round;
+
+        // A heavy one drifts loose and hangs there, the stream pulling past it, before it goes.
+        const float drift = p.linger > 0.0f ? 1.0f - std::exp(-2.0f * std::min(since, p.linger)) : 0.0f;
         if (since < p.linger) {
-            const float sway = 0.01f * kRestDepth * std::sin(2.3f * since + p.phase);
+            const float sway = 0.006f * kRestDepth * std::sin(2.3f * since + p.phase) * drift;
             for (int i = 0; i < 3; ++i) out.position[i] = p.start[i] + drift * p.scatter[i] + sway * b.up[i];
             out.radius     = p.radius;
-            out.brightness = p.brightness;
+            out.brightness = light;
             overlay_.particles.push_back(out);
             continue;
         }
@@ -376,13 +396,14 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
             pos[1] = y;
             pos[2] = r * std::sin(angle);
         }
-        // The light ones burst loose as they go; a heavy one already has, and leaves from there.
-        const float burst = p.linger > 0.0f ? drift * (1.0f - Smoothstep(0.0f, 0.5f, s))
-                                            : (1.0f - std::exp(-25.0f * s)) * (1.0f - s);
-        for (int i = 0; i < 3; ++i) out.position[i] = pos[i] + burst * p.scatter[i];
-        out.radius      = p.radius * (1.0f - 0.45f * s);
-        out.brightness  = p.brightness * (1.0f - 0.4f * s) * (1.0f - Smoothstep(0.42f, kGone, s));
-        out.heat        = Smoothstep(0.4f, 1.0f, s);
+        // The drift apart as it comes loose, easing in, then given up to the stream; a heavy one
+        // has drifted already, and leaves from there.
+        const float apart = p.linger > 0.0f ? drift * (1.0f - Smoothstep(0.0f, 0.5f, s))
+                                            : Smoothstep(0.0f, 0.12f, s) * (1.0f - s);
+        for (int i = 0; i < 3; ++i) out.position[i] = pos[i] + apart * p.scatter[i];
+        out.radius     = p.radius * (1.0f - 0.45f * s);
+        out.brightness = light * (1.0f - 0.4f * s) * (1.0f - Smoothstep(0.42f, kGone, s));
+        out.heat       = Smoothstep(0.4f, 1.0f, s);
         overlay_.particles.push_back(out);
     }
     return overlay_;

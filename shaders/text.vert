@@ -5,7 +5,7 @@
 
 layout(push_constant) uniform Push {
     vec4 rect;    // left, top, right, bottom; the screen's top edge is y = tan(fov / 2)
-    vec4 params;  // scale, alpha, sweep, aspect ratio
+    vec4 params;  // scale, alpha, block, aspect ratio
     vec4 more;    // tan(fov / 2), brightness, unused, unused
 } pc;
 

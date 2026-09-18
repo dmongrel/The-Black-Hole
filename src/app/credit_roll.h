@@ -1,9 +1,9 @@
 // The credits, played over the black hole like the titles of a film.
 //
 // Each credit flies in from behind the camera and comes to rest in the lower left of the screen,
-// fixed to the camera. After a hold it breaks up, left to right, into particles. They leave the
-// camera behind and stream in a spiralling arc down onto the inner edge of the accretion disk,
-// shrinking and dimming as they go, and vanish there. A second later the next credit comes in;
+// fixed to the camera. After a hold the letters pixelate, and the blocks come loose one by one
+// all over the line, each a particle. They leave the camera behind and stream in a spiralling
+// arc down onto the accretion disk, shrinking and dimming, and fade out on the way to its inner edge. A second later the next credit comes in;
 // after the last, a minute's pause, then the list again from the top.
 //
 // Everything is a function of time and the camera, so the same moment always looks the same.
@@ -32,15 +32,14 @@ public:
 
 private:
     struct Particle {
-        float  local[3];     // where it sits in the text, in the camera's frame
-        float  u;            // across the text, 0 at the left: the order it breaks away in
-        float  release;      // seconds after the break-up starts
+        float  local[3];     // where its block sits in the text, in the camera's frame
+        float  release;      // seconds after the text has pixelated
         float  linger;       // seconds a heavy one hangs back before the flow takes it; 0 for most
         float  flight;       // seconds from leaving to the disk
         float  turn;         // how far round the hole it swings on the way, in radians
         float  phase;        // of its wobble, shared with its neighbours so they stream together
-        float  scatter[3];   // the little burst as it comes loose; camera frame, then world
-        float  radius;       // pixels, at release
+        float  scatter[3];   // its drift as it comes loose; camera frame, then world
+        float  radius;       // pixels: half its block's width
         float  brightness;
         bool   released = false;
         double releasedAt = 0.0;
@@ -63,6 +62,7 @@ private:
     bool     started_    = false;
     uint32_t nextTextId_ = 1;
     bool     brokenUp_   = false;
+    int      block_      = 3;  // texels on a side of each block the text pixelates into
 
     render::TextImage     text_;
     float                 restRect_[4]{};  // at the camera's current field of view
