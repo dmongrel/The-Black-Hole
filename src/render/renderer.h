@@ -1,8 +1,10 @@
 // The Vulkan renderer. One device, one pipeline, one skybox, any number of windows (one per
 // monitor in full-screen mode), each with its own surface and swapchain.
 //
-// Every frame is a single full-screen triangle: shaders/blackhole.frag integrates each pixel's
-// light ray through the black hole's curved spacetime and samples the skybox wherever it escapes.
+// Every frame has three passes. shaders/blackhole.frag integrates each pixel's light ray through
+// the black hole's curved spacetime into an HDR image, sampling the skybox wherever a ray escapes;
+// a compute chain (bloom_down.comp, bloom_up.comp) blurs its brightest light into a glow; and
+// composite.frag adds the glow back, tone maps, and writes the swapchain image.
 #ifndef BLACK_HOLE_RENDERER_H
 #define BLACK_HOLE_RENDERER_H
 
@@ -10,6 +12,8 @@
 
 #include <memory>
 #include <string>
+
+#include "render/camera.h"
 
 namespace render {
 
@@ -28,8 +32,9 @@ public:
     void ResizeWindow(HWND hwnd);
     void DetachWindow(HWND hwnd);
 
-    // Draws every attached window. `seconds` is animation time.
-    void RenderFrame(double seconds);
+    // Draws every attached window. `seconds` is animation time (the disk's turbulence); `camera`
+    // is where the frame is seen from.
+    void RenderFrame(double seconds, const CameraPose& camera);
 
     // Writes the next frame presented to `hwnd` to a 32-bit BMP at `path`.
     void RequestCapture(HWND hwnd, const std::string& path);

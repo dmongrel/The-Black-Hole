@@ -44,6 +44,28 @@ is baked on the CPU at start-up into a 2048² cubemap with mipmaps
 ([`src/render/skybox.cpp`](src/render/skybox.cpp)). The mipmaps keep the stars from sparkling
 where lensing squeezes a wide patch of sky into a few pixels.
 
+The tracer writes linear HDR into an offscreen image, and two more passes finish the frame. A
+compute bloom chain ([`shaders/bloom_down.comp`](shaders/bloom_down.comp),
+[`bloom_up.comp`](shaders/bloom_up.comp)) takes light above a soft threshold. It downsamples
+through six half-size levels with a 13-tap filter, using a Karis average on the first level to
+keep single hot pixels from flickering. It then adds the levels back up with a tent filter. The
+composite ([`shaders/composite.frag`](shaders/composite.frag)) adds that glow to the image, then
+exposes it and tone maps it (ACES). The glow is mostly around the Doppler-brightened side of the
+disk, where the film's image blooms too.
+
+### The camera
+
+The screen saver's camera roams ([`src/render/camera.cpp`](src/render/camera.cpp)). It orbits
+the hole continuously. Its pace, distance, height above the disk, roll, and the hole's place in
+the frame each ease towards a randomly chosen value, hold there, then pick another.
+
+- **Pace:** usually the original slow drift. Now and then it is two to three times faster.
+- **Distance:** close (12.5–18 M, where the disk runs off the screen and the hole is framed off
+  centre), middle (22–34 M), or far (42–64 M, where the whole system sits small in the stars).
+
+The development window (`/w`) keeps the original fixed orbit, which is a function of time alone,
+so any frame can be captured again.
+
 ## Building
 
 The build copies [Nuke-Saver](../Nuke-Saver)'s: a plain Makefile driving MinGW-w64.
@@ -74,7 +96,7 @@ disk at run time.
 | Argument | Behaviour |
 |----------|-----------|
 | (none) or `/s` | Full screen on every monitor; any key, click or mouse movement ends it |
-| `/w` | A resizable window, for development; Esc closes it |
+| `/w` | A resizable window, for development, on the fixed camera; Esc closes it |
 | `/p <hwnd>` | Preview pane of the Screen Saver Settings dialog (currently black) |
 | `/c` | Settings (there are none yet) |
 | anything else | Exits immediately |
@@ -86,16 +108,18 @@ disk at run time.
 | `BLACK_HOLE_LOG=1` | Log to `%TEMP%\the-black-hole.log` (or set it to a path) |
 | `BLACK_HOLE_CAPTURE=<file.bmp>` | Save one frame and exit |
 | `BLACK_HOLE_CAPTURE_AT=<seconds>` | When to take that frame (default 4) |
-| `BLACK_HOLE_TIME=<seconds>` | Offset the animation clock, to capture elsewhere in the orbit |
+| `BLACK_HOLE_TIME=<seconds>` | Offset the animation clock, to capture elsewhere in the orbit (the roaming camera is stepped forward to it) |
+| `BLACK_HOLE_CAMERA=classic\|roaming` | Override the camera (`/s` roams, `/w` is classic) |
+| `BLACK_HOLE_SEED=<n>` | Fix the roaming camera's choices, so a run can be repeated |
 | `BLACK_HOLE_VALIDATE=1` | Enable the Khronos validation layer if it is installed |
 
 ## Layout
 
 ```
-shaders/            fullscreen.vert, blackhole.frag (the ray tracer)
+shaders/            fullscreen.vert, blackhole.frag (the ray tracer), bloom_*.comp, composite.frag
 src/main.cpp        argument dispatch
 src/app/            window host, argument parsing, input rules, logging
-src/render/         Vulkan renderer, skybox generator, embedded-shader lookup
+src/render/         Vulkan renderer, camera paths, skybox generator, embedded-shader lookup
 third_party/volk/   Vulkan meta-loader
 tools/              embed_shaders.sh (SPIR-V -> C arrays)
 ```

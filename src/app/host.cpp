@@ -6,8 +6,11 @@
 #include "app/log.h"
 #include "render/renderer.h"
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -182,8 +185,36 @@ double TimeOffsetFromEnvironment() {
     return t ? std::atof(t) : 0.0;
 }
 
+// The screen saver roams; the development window keeps the classic orbit so a frame at a given
+// time can be captured again. BLACK_HOLE_CAMERA=classic|roaming overrides either, and
+// BLACK_HOLE_SEED fixes the roaming camera's choices (otherwise they differ every run).
+std::optional<render::RoamingCamera> CameraFromEnvironment(bool roamByDefault, double offset) {
+    bool roam = roamByDefault;
+    if (const char* c = std::getenv("BLACK_HOLE_CAMERA")) {
+        if (std::strcmp(c, "classic") == 0) roam = false;
+        if (std::strcmp(c, "roaming") == 0) roam = true;
+    }
+    if (!roam) return std::nullopt;
+
+    uint32_t seed;
+    if (const char* s = std::getenv("BLACK_HOLE_SEED")) {
+        seed = static_cast<uint32_t>(std::strtoul(s, nullptr, 0));
+    } else {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        seed = static_cast<uint32_t>(now.QuadPart ^ (now.QuadPart >> 32));
+    }
+    Log("camera: roaming, seed %u", seed);
+
+    // The roaming camera has no closed form, so a time offset is reached by stepping to it at a
+    // fixed rate: the same seed and offset always land on the same pose.
+    render::RoamingCamera camera(seed);
+    for (double t = 0.0; t < offset; t += 1.0 / 30.0) camera.Advance(std::min(1.0 / 30.0, offset - t));
+    return camera;
+}
+
 // Shared by full-screen and windowed runs.
-void RenderLoop(HostState& host) {
+void RenderLoop(HostState& host, bool roamByDefault) {
     LARGE_INTEGER freq{}, start{};
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
@@ -191,6 +222,9 @@ void RenderLoop(HostState& host) {
     const CaptureRequest capture   = CaptureFromEnvironment();
     const double         offset    = TimeOffsetFromEnvironment();
     bool                 requested = false;
+    auto                 roaming   = CameraFromEnvironment(roamByDefault, offset);
+    if (!roaming) Log("camera: classic");
+    double previous = 0.0;
 
     unsigned long long frame = 0;
     MSG                msg{};
@@ -225,8 +259,14 @@ void RenderLoop(HostState& host) {
             }
         }
 
+        // A stall (a debugger, a suspended session) resumes where it left off rather than jumping.
+        const double dt = std::min(host.elapsed - previous, 0.1);
+        previous        = host.elapsed;
+        const render::CameraPose pose =
+            roaming ? roaming->Advance(dt) : render::ClassicCamera(host.elapsed + offset);
+
         if (host.renderer) {
-            host.renderer->RenderFrame(host.elapsed + offset);  // FIFO present paces the loop
+            host.renderer->RenderFrame(host.elapsed + offset, pose);  // FIFO present paces the loop
         } else {
             Sleep(16);
         }
@@ -278,7 +318,7 @@ int RunFullScreen(HINSTANCE instance) {
         // A pointer that wanders onto a second monitor's window must still end the run.
         SetCapture(host.windows.front());
         ShowCursor(FALSE);
-        RenderLoop(host);
+        RenderLoop(host, true);
         ReleaseCapture();
         ShowCursor(TRUE);
     }
@@ -308,7 +348,7 @@ int RunWindowed(HINSTANCE instance) {
         ShowWindow(hwnd, SW_SHOW);
         host.windows.push_back(hwnd);
         if (host.renderer) host.renderer->AttachWindow(hwnd);
-        RenderLoop(host);
+        RenderLoop(host, false);
     }
 
     Teardown(host, instance, kWindowedClass);

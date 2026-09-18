@@ -30,7 +30,7 @@ layout(push_constant) uniform Push {
     vec4 camPos;    // xyz, w = tan(vertical fov / 2)
     vec4 camRight;  // xyz, w = aspect ratio
     vec4 camUp;     // xyz, w = time in seconds
-    vec4 camFwd;    // xyz, w = 1 when the target is UNORM and needs sRGB encoding here
+    vec4 camFwd;    // xyz, w unused
 } pc;
 
 const float SPIN      = 0.95;  // a / M. The film's Gargantua was 0.999 or so
@@ -77,14 +77,6 @@ vec3 blackbody(float kelvin) {
     float g = t <= 66.0 ? 0.3900816 * log(t) - 0.6318414 : 1.1298909 * pow(t - 60.0, -0.0755148);
     float b = t >= 66.0 ? 1.0 : (t <= 19.0 ? 0.0 : 0.5432068 * log(t - 10.0) - 1.1962541);
     return pow(clamp(vec3(r, g, b), 0.0, 1.0), vec3(2.2));
-}
-
-vec3 aces(vec3 x) {
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-}
-
-vec3 srgbEncode(vec3 c) {
-    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
 }
 
 // ---- Kerr geometry ------------------------------------------------------------------------------
@@ -302,7 +294,6 @@ void main() {
     vec3 sky  = texture(uSky, normalize(dot(away, away) > 0.0 ? away : dir)).rgb;
     if (!captured) color += trans * sky;
 
-    color = aces(color * 1.1);
-    if (pc.camFwd.w > 0.5) color = srgbEncode(color);
+    // Linear HDR: bloom and tone mapping follow in their own passes.
     outColor = vec4(color, 1.0);
 }

@@ -1,0 +1,72 @@
+#version 450
+
+// Bloom, the downsample half of the chain (after Nuke-Saver's).
+//
+// The thirteen-tap filter, not a box: a box downsample turns a single bright pixel (a star, the
+// photon ring) into a square that crawls as the camera moves. The first level also takes a Karis
+// average, weighting each group of four by its inverse luminance, which is where fireflies are
+// decided, and applies the soft threshold.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uSource;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D uDestination;
+
+// Shared by both halves of the chain.
+layout(push_constant) uniform Push {
+    vec2  destinationSize;
+    float threshold;   // below this the source contributes nothing; 0 disables it
+    float knee;        // width of the soft shoulder around the threshold
+    float firstLevel;  // 1 on the first downsample
+    float intensity;   // used by the upsample only
+} pc;
+
+float Karis(vec3 c) { return 1.0 / (1.0 + dot(c, vec3(0.2126, 0.7152, 0.0722))); }
+
+vec3 Group(vec3 a, vec3 b, vec3 c, vec3 d, bool weighted) {
+    if (!weighted) return (a + b + c + d) * 0.25;
+    float wa = Karis(a), wb = Karis(b), wc = Karis(c), wd = Karis(d);
+    return (a * wa + b * wb + c * wc + d * wd) / max(wa + wb + wc + wd, 1e-4);
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (texel.x >= int(pc.destinationSize.x) || texel.y >= int(pc.destinationSize.y)) return;
+
+    // Sample in the source's own space, at the centre of the four texels this one covers.
+    vec2 uv     = (vec2(texel) + 0.5) / pc.destinationSize;
+    vec2 stride = 1.0 / vec2(textureSize(uSource, 0));
+
+    vec3 a = texture(uSource, uv + stride * vec2(-2.0, -2.0)).rgb;
+    vec3 b = texture(uSource, uv + stride * vec2( 0.0, -2.0)).rgb;
+    vec3 c = texture(uSource, uv + stride * vec2( 2.0, -2.0)).rgb;
+    vec3 d = texture(uSource, uv + stride * vec2(-2.0,  0.0)).rgb;
+    vec3 e = texture(uSource, uv).rgb;
+    vec3 f = texture(uSource, uv + stride * vec2( 2.0,  0.0)).rgb;
+    vec3 g = texture(uSource, uv + stride * vec2(-2.0,  2.0)).rgb;
+    vec3 h = texture(uSource, uv + stride * vec2( 0.0,  2.0)).rgb;
+    vec3 i = texture(uSource, uv + stride * vec2( 2.0,  2.0)).rgb;
+    vec3 j = texture(uSource, uv + stride * vec2(-1.0, -1.0)).rgb;
+    vec3 k = texture(uSource, uv + stride * vec2( 1.0, -1.0)).rgb;
+    vec3 l = texture(uSource, uv + stride * vec2(-1.0,  1.0)).rgb;
+    vec3 m = texture(uSource, uv + stride * vec2( 1.0,  1.0)).rgb;
+
+    bool weighted = pc.firstLevel > 0.5;
+    vec3 result = Group(j, k, l, m, weighted) * 0.5;
+    result += Group(a, b, d, e, weighted) * 0.125;
+    result += Group(b, c, e, f, weighted) * 0.125;
+    result += Group(d, e, g, h, weighted) * 0.125;
+    result += Group(e, f, h, i, weighted) * 0.125;
+
+    // The threshold, on the first level only: bloom is what the lens does with light that is
+    // genuinely bright, and applying it again at every level would eat the chain. A soft knee
+    // rather than a step, so gas drifting past the threshold does not pop.
+    if (weighted && pc.threshold > 0.0) {
+        float luminance = dot(result, vec3(0.2126, 0.7152, 0.0722));
+        float soft      = clamp(luminance - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
+        soft            = soft * soft / (4.0 * pc.knee + 1e-4);
+        result *= max(soft, luminance - pc.threshold) / max(luminance, 1e-4);
+    }
+
+    imageStore(uDestination, texel, vec4(result, 1.0));
+}
