@@ -17,6 +17,7 @@ constexpr double kFirstDelay = 3.0;   // the black hole alone first
 constexpr double kFlyIn      = 3.0;
 constexpr double kHoldOne    = 3.0;   // a single line
 constexpr double kHoldTwo    = 4.0;   // two lines take longer to read
+constexpr double kShake      = 1.1;   // the text shaking, its colours coming apart, just before
 constexpr double kPixelate   = 1.2;   // the letters coarsening into blocks
 constexpr float  kDissolve   = 1.5f;  // the blocks coming loose, at random all over the line
 constexpr float  kFlightMin  = 5.8;   // each particle's trip to the disk. Spread wide, so the
@@ -185,7 +186,7 @@ float CreditRoll::HoldSeconds() const {
 }
 
 float CreditRoll::CreditSeconds() const {
-    return static_cast<float>(kFlyIn + HoldSeconds() + kPixelate + kDissolve + kLingerMax + kFlightMax * kGone + kGap);
+    return static_cast<float>(kFlyIn + HoldSeconds() + kShake + kPixelate + kDissolve + kLingerMax + kFlightMax * kGone + kGap);
 }
 
 void CreditRoll::StartCredit(size_t index) {
@@ -198,7 +199,8 @@ void CreditRoll::StartCredit(size_t index) {
     // Blocks big enough to read as pixelation at this size, and few enough for the budget.
     size_t inked = 0;
     for (uint8_t c : text_.coverage) inked += c > 0;
-    block_ = std::max(2, static_cast<int>(std::lround(fontPixels / kFontPerBlock)));
+    fontPixels_ = fontPixels;
+    block_      = std::max(2, static_cast<int>(std::lround(fontPixels / kFontPerBlock)));
     while (inked / static_cast<size_t>(block_ * block_) > kParticleBudget) ++block_;
     Log("credits: %u of %u, %dx%d px, blocks of %d", static_cast<unsigned>(index_ + 1),
         static_cast<unsigned>(credits_.size()), text_.width, text_.height, block_);
@@ -250,6 +252,45 @@ void CreditRoll::BreakUp(const render::TextImage& text) {
     Log("credits: broke into %u particles (blocks of %d px)", n, block);
 }
 
+void CreditRoll::Shake(float progress, float seconds, float perPx) {
+    // Jerky: a new displacement every beat, held until the next, not a smooth wobble. It builds,
+    // peaks, and snaps back together for the break-up.
+    constexpr float kBeat = 1.0f / 14.0f;
+    const auto      beat  = static_cast<uint32_t>(seconds / kBeat);
+    const uint32_t  key   = beat * 7919u + static_cast<uint32_t>(index_) * 104729u + 17u;
+    const float     build = Smoothstep(0.0f, 0.3f, progress) * (1.0f - Smoothstep(0.82f, 0.95f, progress));
+    if (build <= 0.0f) return;
+
+    // The whole text jumps; now and then it sticks for a beat.
+    const float font = static_cast<float>(fontPixels_);
+    if (Hash(key, 20) > 0.2f) {
+        const float jump = build * 0.18f * font * perPx;
+        const float dx = jump * (2.0f * Hash(key, 21) - 1.0f), dy = 0.6f * jump * (2.0f * Hash(key, 22) - 1.0f);
+        overlay_.rect[0] += dx;
+        overlay_.rect[2] += dx;
+        overlay_.rect[1] += dy;
+        overlay_.rect[3] += dy;
+    }
+
+    // Red and blue slip off green, opposite ways; on some beats they tear right apart, a line or
+    // more, into three images of the text.
+    const float w = static_cast<float>(text_.width), h = static_cast<float>(text_.height);
+    float       sx = build * 0.08f * font * (2.0f * Hash(key, 23) - 1.0f);
+    float       sy = build * 0.04f * font * (2.0f * Hash(key, 24) - 1.0f);
+    if (Hash(key, 25) < 0.3f * build) {
+        const float tear = (0.7f + 0.6f * Hash(key, 26)) * 1.3f * font;  // about a line
+        if (Hash(key, 27) < 0.5f) {
+            sy = tear * (Hash(key, 28) < 0.5f ? 1.0f : -1.0f);
+        } else {
+            sx = 2.0f * tear * (Hash(key, 28) < 0.5f ? 1.0f : -1.0f);
+        }
+    }
+    overlay_.split[0] = sx / w;
+    overlay_.split[1] = sy / h;
+    overlay_.split[2] = -sx / w * (0.8f + 0.4f * Hash(key, 29));
+    overlay_.split[3] = -sy / h * (0.8f + 0.4f * Hash(key, 30));
+}
+
 const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPose& camera) {
     overlay_.text = nullptr;
     overlay_.particles.clear();
@@ -280,12 +321,14 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
     restRect_[1] = restRect_[3] + text_.height * perPx;
 
     const double local     = seconds - start_;
-    const double breakAt   = kFlyIn + HoldSeconds();
+    const double shakeAt   = kFlyIn + HoldSeconds();
+    const double breakAt   = shakeAt + kShake;
     if (local < 0.0) return overlay_;
 
     std::memcpy(overlay_.rect, restRect_, sizeof(restRect_));
     overlay_.brightness = kBrightness;
     overlay_.block      = 1.0f;
+    std::memset(overlay_.split, 0, sizeof(overlay_.split));
     overlay_.scale      = 1.0f;
     overlay_.alpha      = 1.0f;
 
@@ -301,8 +344,13 @@ const render::Overlay& CreditRoll::Update(double seconds, const render::CameraPo
         }
         return overlay_;
     }
+    if (local < shakeAt) {
+        overlay_.text = &text_;
+        return overlay_;
+    }
     if (local < breakAt) {
         overlay_.text = &text_;
+        Shake(static_cast<float>((local - shakeAt) / kShake), static_cast<float>(local - shakeAt), perPx);
         return overlay_;
     }
 

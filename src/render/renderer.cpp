@@ -65,6 +65,7 @@ struct TextPush {
     float rect[4];
     float params[4];  // scale, alpha, block, aspect
     float more[4];    // tan(fov / 2), brightness, unused, unused
+    float split[4];   // red x, y, blue x, y: offsets from green, in texture coordinates
 };
 
 // Must match shaders/composite.frag.
@@ -908,6 +909,7 @@ struct Renderer::Impl {
             p.params[3] = scene.camRight[3];
             p.more[0]   = scene.camPos[3];
             p.more[1]   = overlay.brightness;
+            std::memcpy(p.split, overlay.split, sizeof(p.split));
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout, 0, 1, &textSet, 0, nullptr);
             vkCmdPushConstants(cmd, textLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p),

@@ -88,7 +88,8 @@ and comes to rest in the lower left, set left-justified in Michroma, a squared, 
 The font is embedded in the `.scr` and loaded for the screen saver alone
 (see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)). A colon splits a credit into two lines: the colon is dropped, and each half becomes a line.
 
-After a few seconds' hold the whole line pixelates, its letters coarsening into blocks. Each block
+After a few seconds' hold the text shakes, jerkily, and its red, green and blue come apart,
+sometimes tearing into three separate images a line apart. It snaps back together, and then the whole line pixelates, its letters coarsening into blocks. Each block
 then becomes one particle, exactly where it was and just as bright, so nothing is added to the
 letters. The blocks come loose at random all over the line, drifting apart and softening into
 round glows, until the letters have dissolved. Most particles join the stream at once. About a

@@ -44,6 +44,9 @@ struct Overlay {
     float            alpha      = 0.0f;
     float            brightness = 1.0f;
     float            block      = 1.0f;  // drawn pixelated in blocks this many texels wide (1: as set)
+    // Chromatic aberration: where the red and blue images sit relative to the green one, as a
+    // fraction of the text's width and height: red x, y, blue x, y (y down). Zero: one image.
+    float            split[4]{};
 
     std::vector<OverlayParticle> particles;
 };

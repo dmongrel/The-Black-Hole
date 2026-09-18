@@ -1,7 +1,8 @@
 // The credits, played over the black hole like the titles of a film.
 //
 // Each credit flies in from behind the camera and comes to rest in the lower left of the screen,
-// fixed to the camera. After a hold the letters pixelate, and the blocks come loose one by one
+// fixed to the camera. After a hold it shakes, its colours tearing apart and coming back
+// together; then the letters pixelate, and the blocks come loose one by one
 // all over the line, each a particle. They leave the camera behind and stream in a spiralling
 // arc down onto the accretion disk, shrinking and dimming, and fade out on the way to its inner edge. A second later the next credit comes in;
 // after the last, a minute's pause, then the list again from the top.
@@ -51,6 +52,7 @@ private:
 
     void  StartCredit(size_t index);
     void  BreakUp(const render::TextImage& text);
+    void  Shake(float progress, float seconds, float perPx);  // sets the overlay's jolt and colour split
     float HoldSeconds() const;
     float CreditSeconds() const;  // from its fly-in to the last particle gone, plus the gap
 
@@ -62,6 +64,7 @@ private:
     bool     started_    = false;
     uint32_t nextTextId_ = 1;
     bool     brokenUp_   = false;
+    int      fontPixels_ = 0;
     int      block_      = 3;  // texels on a side of each block the text pixelates into
 
     render::TextImage     text_;
