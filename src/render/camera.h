@@ -24,7 +24,7 @@ CameraPose ClassicCamera(double seconds);
 // the distance (from close enough that the disk runs off the screen to far enough that the whole
 // system is small), the height above the disk, the roll, and where in the frame the hole sits.
 //
-// Every few minutes, on average, it also breaks pattern with an event: a dive through the disk's
+// Every 1.5 to 2.5 minutes it also breaks pattern with an event: a dive through the disk's
 // plane to look at it from below, a climb to look down on it from high above, or a fast swoop in
 // close past the hole.
 class RoamingCamera {
@@ -57,7 +57,7 @@ private:
     std::mt19937 rng_;
     Event        only_;
     float        azimuth_;
-    float        untilEvent_;  // tempo-scaled seconds
+    float        untilEvent_;  // real seconds
     Drift        tempo_, distance_, inclination_, roll_, aimX_, aimY_;
 };
 

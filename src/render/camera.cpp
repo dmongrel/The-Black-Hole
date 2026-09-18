@@ -63,7 +63,7 @@ float RoamingCamera::Uniform(float lo, float hi) { return std::uniform_real_dist
 
 RoamingCamera::RoamingCamera(uint32_t seed, Event only)
     : rng_(seed), only_(only), azimuth_(Uniform(0.0f, 6.2831853f)) {
-    untilEvent_ = only_ == Event::Any ? Uniform(150.0f, 330.0f) : 8.0f;
+    untilEvent_ = only_ == Event::Any ? Uniform(90.0f, 150.0f) : 8.0f;
     // Start where the classic camera does, so the first seconds look like the saver always has,
     // and let every quantity wander off from there.
     tempo_       = {1.0f, 1.0f, 0.0f, 1.0f, Uniform(20.0f, 40.0f)};
@@ -181,10 +181,11 @@ CameraPose RoamingCamera::Advance(double dt) {
     if (roll_.Done()) PickRoll();
     if (aimX_.Done()) PickAim();
 
-    untilEvent_ -= step;
+    // Events are spaced in real time, so a brisk stretch does not bring them on sooner.
+    untilEvent_ -= realDt;
     if (untilEvent_ <= 0.0f) {
         if (StartEvent()) {
-            untilEvent_ = only_ == Event::Any ? Uniform(180.0f, 360.0f) : Uniform(60.0f, 90.0f);
+            untilEvent_ = only_ == Event::Any ? Uniform(90.0f, 150.0f) : Uniform(60.0f, 90.0f);
         } else {
             untilEvent_ = 15.0f;
         }

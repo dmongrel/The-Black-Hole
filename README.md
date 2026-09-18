@@ -70,7 +70,7 @@ the frame each ease towards a randomly chosen value, hold there, then pick anoth
 - **Distance:** close (12.5–18 M, where the disk runs off the screen and the hole is framed off
   centre), middle (22–34 M), or far (42–64 M, where the whole system sits small in the stars).
 
-Every three to six minutes the camera also breaks pattern with an event:
+Every one and a half to two and a half minutes the camera also breaks pattern with an event:
 
 - **Dive:** it sinks through the disk's plane, where the disk thins to a line between the arches
   above and below the shadow, and hangs below it for a while.
