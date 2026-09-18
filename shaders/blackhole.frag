@@ -1,20 +1,25 @@
 #version 450
 
-// A Gargantua-style black hole.
+// A Gargantua-style spinning black hole.
 //
-// Each pixel's light ray is traced backwards from the camera through Schwarzschild spacetime.
-// A photon's path obeys the orbit equation u'' + u = 3M u^2 (u = 1/r), which is the same as a
-// Newtonian trajectory under the extra acceleration a = -(3/2) r_s h^2 r / |r|^5, where h is the
-// photon's conserved angular momentum. Integrating that bends the ray around the hole: rays with
-// small impact parameters fall through the horizon (the shadow), grazing ones wrap around the
-// photon sphere (the thin bright ring), and rays that cross the equatorial plane pick up light
-// from the accretion disk. That is how the far side of the disk appears arched over the top and
-// under the bottom of the shadow, as in the film and in James, von Tunzelmann, Franklin & Thorne,
-// "Gravitational lensing by spinning black holes in astrophysics, and in the movie Interstellar"
-// (2015). This is the non-spinning case; Gargantua spins, which mostly flattens one side of the
-// shadow.
+// Each pixel's light ray is traced backwards from the camera through Kerr spacetime, the geometry
+// around a rotating black hole, as in James, von Tunzelmann, Franklin & Thorne, "Gravitational
+// lensing by spinning black holes in astrophysics, and in the movie Interstellar" (2015).
 //
-// Units are G = c = M = 1, so the horizon is at r = 2 and the photon sphere at r = 3.
+// The ray is a null geodesic in Boyer-Lindquist coordinates (r, theta, phi), integrated with
+// Hamilton's equations. With the photon's energy fixed at 1 and its axial angular momentum L
+// conserved, the super-Hamiltonian is H = N / (2 Sigma) with
+//
+//     N = Delta p_r^2 + p_theta^2 + (L - a sin^2 theta)^2 / sin^2 theta - (r^2 + a^2 - a L)^2 / Delta
+//     Sigma = r^2 + a^2 cos^2 theta,   Delta = r^2 - 2r + a^2
+//
+// and H = 0 along the ray. Rays that fall through the horizon make the shadow; rays that circle
+// near the photon orbits make the thin bright ring; rays that cross the equatorial plane pick up
+// light from the disk, which is how the far side of the disk arches over and under the shadow.
+// Spin drags the rays round with the hole: the shadow is flattened on the side where the disk
+// comes towards the camera, and the disk can reach much further in before its orbits fail.
+//
+// Units are G = c = M = 1. Spin is the y axis; the disk is the plane y = 0.
 
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
@@ -28,11 +33,10 @@ layout(push_constant) uniform Push {
     vec4 camFwd;    // xyz, w = 1 when the target is UNORM and needs sRGB encoding here
 } pc;
 
-const float RS        = 2.0;   // Schwarzschild radius
-const float DISK_IN   = 4.5;   // inner edge; a little inside the r = 6 ISCO, for the look
+const float SPIN      = 0.95;  // a / M. The film's Gargantua was 0.999 or so
 const float DISK_OUT  = 17.0;
 const float ESCAPE_R  = 70.0;  // beyond this, bending is negligible and the ray reads the sky
-const int   MAX_STEPS = 500;
+const int   MAX_STEPS = 900;
 
 // ---- noise --------------------------------------------------------------------------------------
 
@@ -83,6 +87,43 @@ vec3 srgbEncode(vec3 c) {
     return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
 }
 
+// ---- Kerr geometry ------------------------------------------------------------------------------
+
+// Radius of the innermost stable prograde circular orbit (Bardeen, Press & Teukolsky 1972).
+float iscoRadius(float a) {
+    float z1 = 1.0 + pow(1.0 - a * a, 1.0 / 3.0) * (pow(1.0 + a, 1.0 / 3.0) + pow(1.0 - a, 1.0 / 3.0));
+    float z2 = sqrt(3.0 * a * a + z1 * z1);
+    return 3.0 + z2 - sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2));
+}
+
+// Boyer-Lindquist to Cartesian (oblate spheroidal; spin along y).
+vec3 toCartesian(float r, float theta, float phi) {
+    float R = sqrt(r * r + SPIN * SPIN);
+    return vec3(R * sin(theta) * cos(phi), r * cos(theta), R * sin(theta) * sin(phi));
+}
+
+// Hamilton's equations. x = (r, theta, phi), p = (p_r, p_theta); L is conserved.
+// The terms proportional to N are dropped from dp: N = 0 on a null ray.
+void derivs(vec3 x, vec2 p, float L, out vec3 dx, out vec2 dp) {
+    float a  = SPIN;
+    float r  = x.x;
+    float s  = sin(x.y);
+    float c  = cos(x.y);
+    float s2 = max(s * s, 1e-9);  // the pole is a coordinate singularity, not a physical one
+
+    float sigma = r * r + a * a * c * c;
+    float delta = r * r - 2.0 * r + a * a;
+    float B     = r * r + a * a - a * L;
+
+    dx.x = delta * p.x / sigma;
+    dx.y = p.y / sigma;
+    dx.z = ((L - a * s2) / s2 + a * B / delta) / sigma;
+
+    float dNdr  = (2.0 * r - 2.0) * p.x * p.x - 4.0 * r * B / delta + B * B * (2.0 * r - 2.0) / (delta * delta);
+    float dNdth = 2.0 * s * c * (a * a - L * L / (s2 * s2));
+    dp = -0.5 * vec2(dNdr, dNdth) / sigma;
+}
+
 // ---- accretion disk -----------------------------------------------------------------------------
 
 // Streaky turbulence at a point of the disk, rotating differentially (Keplerian, omega ~ r^-1.5).
@@ -90,12 +131,12 @@ vec3 srgbEncode(vec3 c) {
 // are cross-faded, each reset while it is invisible.
 float diskTurbulence(float r, float phi, float time) {
     const float PERIOD = 60.0;
-    const float SPIN   = 4.0;   // speeds the orbit up; the real one at r = 6 is far too slow to see
+    const float SPEED  = 4.0;   // speeds the orbit up; the real one is far too slow to watch
     float t1 = mod(time, PERIOD);
     float t2 = mod(time + 0.5 * PERIOD, PERIOD);
     float w1 = 1.0 - abs(2.0 * t1 / PERIOD - 1.0);
 
-    float omega = SPIN * pow(r, -1.5);
+    float omega = SPEED / (pow(r, 1.5) + SPIN);
     float a1 = phi - omega * t1;
     float a2 = phi - omega * t2;
     // Sampled on a cylinder so the pattern has no seam at phi = +-pi. The radial frequency is
@@ -105,13 +146,10 @@ float diskTurbulence(float r, float phi, float time) {
     return mix(n2, n1, w1);
 }
 
-// Light emitted towards the camera by the disk at `hit`, seen along `dir`. rgb is premultiplied
-// by alpha.
-vec4 shadeDisk(vec3 hit, vec3 dir, float time) {
-    float r   = length(hit.xz);
-    float phi = atan(hit.z, hit.x);
-
-    float inner = smoothstep(DISK_IN, DISK_IN + 1.2, r);
+// Light from the disk at Boyer-Lindquist (r, phi) reaching the camera along a ray with angular
+// momentum L. rgb is premultiplied by alpha.
+vec4 shadeDisk(float r, float phi, float L, float diskIn, float time) {
+    float inner = smoothstep(diskIn, diskIn + 1.0, r);
     float outer = 1.0 - smoothstep(DISK_OUT * 0.55, DISK_OUT, r);
     float edge  = inner * outer;
     if (edge <= 0.0) return vec4(0.0);
@@ -120,32 +158,27 @@ vec4 shadeDisk(vec3 hit, vec3 dir, float time) {
     float streaks = smoothstep(0.30, 0.80, turb);
     float rings   = 0.75 + 0.25 * sin(r * 7.0 + turb * 6.0);
 
-    // Relativistic Doppler shift and beaming. The gas orbits at beta = sqrt(M / (r - 2M)) as seen
-    // by a static observer, and g combines that with the gravitational redshift. The film toned
-    // the beaming down so the disk did not look lopsided; so does this, with BEAMING.
+    // Frequency shift g = E_observed / E_emitted for gas on a prograde circular Kerr orbit, which
+    // folds together the Doppler shift and the gravitational redshift. The ray was traced
+    // backwards, so the real photon's angular momentum is -L. The film toned the beaming down
+    // so the disk did not look lopsided; so does this, with BEAMING.
     const float BEAMING = 0.45;
-    vec3  vel   = normalize(vec3(-hit.z, 0.0, hit.x));
-    float beta  = sqrt(1.0 / max(r - RS, 0.5));
-    beta        = min(beta, 0.8);
-    float gamma = inversesqrt(1.0 - beta * beta);
-    float g     = sqrt(1.0 - RS / r) / (gamma * (1.0 - beta * dot(vel, -dir)));
+    float sr    = sqrt(r);
+    float omega = 1.0 / (r * sr + SPIN);
+    float ut    = (r * sr + SPIN) / (pow(r, 0.75) * sqrt(max(r * sr - 3.0 * sr + 2.0 * SPIN, 1e-4)));
+    float g     = 1.0 / (ut * max(1.0 + omega * L, 0.05));
     g           = mix(1.0, g, BEAMING);
 
-    // Thin-disk temperature falls off roughly as r^-3/4.
-    float kelvin    = 6800.0 * pow(DISK_IN / r, 0.75) * g;
-    float intensity = 3.2 * pow(DISK_IN / r, 1.6) * g * g * g;
+    // Thin-disk temperature falls off roughly as r^-3/4 away from the inner edge.
+    float kelvin    = 6800.0 * pow(diskIn / r, 0.75) * g;
+    float intensity = 3.2 * pow(diskIn / r, 1.6) * g * g * g;
 
     vec3  color = blackbody(kelvin) * intensity * (0.30 + 1.2 * streaks) * rings;
-    float alpha = edge * mix(0.35, 0.95, streaks) * mix(1.0, 0.55, (r - DISK_IN) / (DISK_OUT - DISK_IN));
+    float alpha = edge * mix(0.35, 0.95, streaks) * mix(1.0, 0.55, (r - diskIn) / (DISK_OUT - diskIn));
     return vec4(color * alpha, alpha);
 }
 
 // ---- tracing ------------------------------------------------------------------------------------
-
-vec3 accel(vec3 p, float h2) {
-    float r2 = dot(p, p);
-    return -1.5 * RS * h2 * p / (r2 * r2 * sqrt(r2));
-}
 
 void main() {
     float time = pc.camUp.w;
@@ -154,58 +187,119 @@ void main() {
                            ndc.x * pc.camPos.w * pc.camRight.w * pc.camRight.xyz -
                            ndc.y * pc.camPos.w * pc.camUp.xyz);
 
-    vec3  p  = pc.camPos.xyz;
-    vec3  v  = dir;
-    vec3  L  = cross(p, v);
-    float h2 = dot(L, L);
+    const float a       = SPIN;
+    float       horizon = 1.0 + sqrt(1.0 - a * a);
+    float       diskIn  = iscoRadius(a);
+
+    // Camera position in Boyer-Lindquist coordinates.
+    vec3  cam = pc.camPos.xyz;
+    float rho2 = dot(cam, cam) - a * a;
+    float r    = sqrt(0.5 * (rho2 + sqrt(rho2 * rho2 + 4.0 * a * a * cam.y * cam.y)));
+    float th   = acos(clamp(cam.y / r, -1.0, 1.0));
+    float ph   = atan(cam.z, cam.x);
+
+    // The ray's direction in the camera's local frame. At the camera's distance the coordinate
+    // directions are close enough to the spherical ones.
+    vec3  rhat  = normalize(cam);
+    float sth   = sqrt(max(1.0 - rhat.y * rhat.y, 1e-8));
+    vec3  phhat = vec3(-sin(ph), 0.0, cos(ph));
+    vec3  thhat = vec3(rhat.y * cos(ph), -sth, rhat.y * sin(ph));
+    vec3  n     = vec3(dot(dir, rhat), dot(dir, thhat), dot(dir, phhat));
+
+    // Momenta for a photon with that direction as seen by a zero-angular-momentum observer (the
+    // frame that the spinning hole drags round with it), scaled to unit energy at infinity.
+    float s2    = sin(th) * sin(th);
+    float sigma = r * r + a * a * cos(th) * cos(th);
+    float delta = r * r - 2.0 * r + a * a;
+    float Ak    = (r * r + a * a) * (r * r + a * a) - a * a * delta * s2;
+    float alpha = sqrt(sigma * delta / Ak);
+    float omega = 2.0 * a * r / Ak;
+    float varpi = sqrt(Ak / sigma) * sin(th);
+    float L     = varpi * n.z / (alpha + varpi * omega * n.z);
+    float Ez    = (1.0 - omega * L) / alpha;
+
+    vec3 x = vec3(r, th, ph);
+    vec2 p = vec2(sqrt(sigma / delta) * Ez * n.x, sqrt(sigma) * Ez * n.y);
 
     vec3  color    = vec3(0.0);
     float trans    = 1.0;   // how much of what lies further along the ray still reaches the camera
     bool  captured = false;
+    vec3  prevPos  = cam;
+    vec3  pos      = cam;
 
-    for (int i = 0; i < MAX_STEPS; ++i) {
-        float r = length(p);
-        if (r < RS * 1.02) {
+    int i = 0;
+    for (; i < MAX_STEPS; ++i) {
+        if (x.x < horizon + 0.02) {
             captured = true;
             break;
         }
-        if (r > ESCAPE_R && dot(p, v) > 0.0) break;
+        if (x.x > ESCAPE_R && p.x > 0.0) break;
 
-        // Steps shrink near the hole, where the path curves hardest.
-        float dt = clamp(0.07 * (r - RS * 0.9), 0.02, 2.5);
+        vec3 k1x, k2x, k3x, k4x;
+        vec2 k1p, k2p, k3p, k4p;
+        derivs(x, p, L, k1x, k1p);
 
-        // Velocity Verlet.
-        vec3 a0 = accel(p, h2);
-        vec3 pn = p + v * dt + 0.5 * a0 * dt * dt;
-        vec3 vn = v + 0.5 * (a0 + accel(pn, h2)) * dt;
+        // The step is chosen from how fast each coordinate is moving, not from r alone: near the
+        // pole theta and phi swing hard for rays with small L, and near the horizon frame
+        // dragging spins phi. Letting any of them jump turns the integration to noise there.
+        float h = clamp(0.05 * x.x, 0.01, 2.5);
+        // Near the axis a ray with small L bounces off the L^2 / sin^2 theta barrier, and the
+        // bounce has to be resolved or p_theta blows up: hence theta and p_theta both limited.
+        h = min(h, 0.1 * max(abs(sin(x.y)), 0.002) / max(abs(k1x.y), 1e-6));
+        h = min(h, 0.2 * (abs(p.y) + 0.05 * x.x) / max(abs(k1p.y), 1e-6));
+        // phi by the distance it moves the ray, not the angle: at the pole phi spins without
+        // the ray going anywhere, and limiting the angle there only starves the ray of steps.
+        h = min(h, 0.12 / max(abs(k1x.z * sin(x.y)), 1e-6));
+        h = min(h, 0.2 * (x.x - horizon) / max(abs(k1x.x), 1e-6));
+        h = max(h, 1e-4);
+
+        // Classic fourth-order Runge-Kutta.
+        derivs(x + 0.5 * h * k1x, p + 0.5 * h * k1p, L, k2x, k2p);
+        derivs(x + 0.5 * h * k2x, p + 0.5 * h * k2p, L, k3x, k3p);
+        derivs(x + h * k3x, p + h * k3p, L, k4x, k4p);
+        vec3 xn = x + h / 6.0 * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
+        vec2 pn = p + h / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
 
         // Crossing the equatorial plane: the disk is infinitely thin.
-        if (p.y * pn.y < 0.0) {
-            float f   = p.y / (p.y - pn.y);
-            vec3  hit = mix(p, pn, f);
-            float rh  = length(hit.xz);
-            if (rh > DISK_IN && rh < DISK_OUT) {
-                vec4 d = shadeDisk(hit, normalize(mix(v, vn, f)), time);
+        float c0 = cos(x.y);
+        float c1 = cos(xn.y);
+        if (c0 * c1 < 0.0 && abs(c0) < 0.3 && abs(c1) < 0.3) {
+            float f  = c0 / (c0 - c1);
+            float rh = mix(x.x, xn.x, f);
+            if (rh > diskIn && rh < DISK_OUT) {
+                vec4 d = shadeDisk(rh, mix(x.z, xn.z, f), L, diskIn, time);
                 color += trans * d.rgb;
                 trans *= 1.0 - d.a;
-                if (trans < 0.005) break;
+                if (trans < 0.005) {
+                    x = xn;
+                    break;
+                }
             }
         }
 
+        prevPos = pos;
+        pos     = toCartesian(xn.x, xn.y, xn.z);
+
         // A faint warm haze hugging the disk plane: stands in for the glow around Gargantua's disk
         // and gets lensed along with everything else.
-        float rxz  = length(pn.xz);
-        float haze = exp(-abs(pn.y) * 1.4) * smoothstep(DISK_OUT, DISK_IN, rxz) * smoothstep(DISK_IN * 0.8, DISK_IN * 1.3, rxz);
-        color += trans * haze * dt * 0.010 * vec3(1.0, 0.72, 0.45);
+        float rxz  = length(pos.xz);
+        float haze = exp(-abs(pos.y) * 1.4) * smoothstep(DISK_OUT, diskIn, rxz) * smoothstep(diskIn * 0.8, diskIn * 1.3, rxz);
+        color += trans * haze * min(h, 2.5) * 0.010 * vec3(1.0, 0.72, 0.45);
 
+        x = xn;
         p = pn;
-        v = vn;
     }
 
+    // A ray still close in when the steps run out is circling a photon orbit: it belongs to the
+    // shadow's edge, and would otherwise read the sky in an arbitrary direction.
+    if (i == MAX_STEPS && x.x < 5.0) captured = true;
+
+    // The escaping ray's direction, from its last step: out here it is all but straight.
     // Sampled outside any branch so the implicit mip selection sees neighbouring pixels' final
     // directions: where lensing squeezes a wide patch of sky into a pixel, it reads a coarser mip
     // instead of sparkling.
-    vec3 sky = texture(uSky, normalize(v)).rgb;
+    vec3 away = pos - prevPos;
+    vec3 sky  = texture(uSky, normalize(dot(away, away) > 0.0 ? away : dir)).rgb;
     if (!captured) color += trans * sky;
 
     color = aces(color * 1.1);

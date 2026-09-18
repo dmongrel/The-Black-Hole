@@ -6,29 +6,38 @@ with Vulkan and C++20.
 ## How it looks the way it does
 
 Each pixel is one light ray, traced backwards from the camera through the curved spacetime of a
-Schwarzschild (non-spinning) black hole, all in one fragment shader
-([`shaders/blackhole.frag`](shaders/blackhole.frag)). A photon's orbit obeys
-u″ + u = 3Mu² (u = 1/r), which can be integrated as a straight-line path pushed by an extra
-acceleration −(3/2)·r_s·h²·**r**/|**r**|⁵, where h is the photon's conserved angular momentum.
-Everything characteristic of the film's image falls out of that one equation:
+spinning (Kerr) black hole, all in one fragment shader
+([`shaders/blackhole.frag`](shaders/blackhole.frag)). This is the approach of the paper behind
+the film's images: James, von Tunzelmann, Franklin & Thorne, "Gravitational lensing by spinning
+black holes in astrophysics, and in the movie Interstellar", Class. Quantum Grav. 32 (2015)
+065001.
 
-- **The shadow.** Rays with a small impact parameter fall through the horizon.
-- **The photon ring.** Rays that graze r = 3M wrap around the hole and come out as a thin bright
-  circle at the shadow's edge.
+The ray is a null geodesic in Boyer-Lindquist coordinates, integrated with Hamilton's equations
+(fourth-order Runge-Kutta). The photon's energy and axial angular momentum are conserved. Each
+ray starts from the frame of a zero-angular-momentum observer at the camera: the frame the
+spinning hole drags round with it. Step sizes come from how fast each coordinate is changing, so
+the integration stays stable both near the horizon, where frame dragging spins the ray round,
+and near the spin axis, where the coordinates themselves are singular. The spin is
+`SPIN = 0.95` (a/M) in the shader. The film's Gargantua was about 0.999.
+
+Everything characteristic of the film's image falls out of the geodesics:
+
+- **The shadow.** Rays that fall through the horizon. Spin flattens it into a D on the side
+  where the disk comes towards the camera, because photons orbiting with the spin can get
+  closer before they are lost.
+- **The photon ring.** Rays that circle near the photon orbits come out as a thin bright ring at
+  the shadow's edge.
 - **The arch.** The disk is flat, but light from its far side is bent over the top of the hole and
   under the bottom, so it appears as a halo standing up around the shadow.
 - **Star streaks.** The background is lensed too. At this distance the Einstein radius is
   about 20°, so stars near the hole are drawn out into arcs.
 
-The accretion disk is a thin plane with turbulent, differentially rotating (Keplerian) streaks.
-Its colour comes from a thin-disk temperature profile (T ∝ r^−3/4). It also has relativistic
-Doppler beaming and gravitational redshift, toned down the way the film toned them down.
-
-The film's renders were made with Kip Thorne's equations for a *spinning* black hole; see
-James, von Tunzelmann, Franklin & Thorne, "Gravitational lensing by spinning black holes in
-astrophysics, and in the movie Interstellar", Class. Quantum Grav. 32 (2015) 065001. This first
-version uses the non-spinning case, which gets the look without the Kerr geodesic equations.
-Spin would mostly flatten one side of the shadow.
+The accretion disk is a thin plane from the prograde innermost stable circular orbit
+(r ≈ 1.94 M at this spin, against 6 M without spin) out to 17 M. It has turbulent streaks that
+rotate at the Kerr orbital rate. Its colour comes from a thin-disk temperature profile
+(T ∝ r^−3/4). The frequency shift comes from the gas's circular-orbit four-velocity, which
+combines Doppler beaming and gravitational redshift. The shift is toned down the way the film
+toned it down.
 
 The surroundings are a skybox: a star field with faint nebulous cloud and a dust-lane band. It
 is baked on the CPU at start-up into a 2048² cubemap with mipmaps
