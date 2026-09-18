@@ -81,6 +81,13 @@ std::wstring DefaultCreditsText() {
     return ToCrLf(Widen(static_cast<const char*>(LockResource(data)), SizeofResource(nullptr, res)));
 }
 
+std::wstring FontLicenseText() {
+    HRSRC   res  = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_FONT_LICENSE), MAKEINTRESOURCEW(10));  // RT_RCDATA
+    HGLOBAL data = res ? LoadResource(nullptr, res) : nullptr;
+    if (!data) return {};
+    return ToCrLf(Widen(static_cast<const char*>(LockResource(data)), SizeofResource(nullptr, res)));
+}
+
 std::wstring CreditsText() {
     std::wstring text;
     const std::wstring path = CreditsPath();

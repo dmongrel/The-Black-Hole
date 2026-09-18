@@ -34,6 +34,10 @@ INT_PTR CALLBACK SettingsProc(HWND dialog, UINT msg, WPARAM wParam, LPARAM) {
                 case IDC_DEFAULTS:
                     SetWindowTextW(GetDlgItem(dialog, IDC_CREDITS), DefaultCreditsText().c_str());
                     return TRUE;
+                case IDC_FONT_LICENSE:
+                    MessageBoxW(dialog, FontLicenseText().c_str(), L"Michroma - SIL Open Font License",
+                                MB_OK | MB_ICONINFORMATION);
+                    return TRUE;
                 case IDOK:
                     if (!SaveCreditsText(EditText(GetDlgItem(dialog, IDC_CREDITS)))) {
                         const std::wstring message = L"The credits could not be saved to\n" + CreditsPath();

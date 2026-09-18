@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "app/log.h"
+#include "app/resource.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,7 +34,8 @@ constexpr double kPause      = 60.0;  // after the last credit, before the first
 constexpr float kRestDepth  = 2.0f;
 constexpr float kLeftMargin = 0.07f;  // of the screen's width
 constexpr float kBottom     = 0.13f;  // of the screen's height, from the bottom
-constexpr float kFontHeight = 0.034f; // of the screen's height
+constexpr float kFontHeight = 0.026f; // of the screen's height; Michroma is broad and tall-bodied
+constexpr float kTracking   = 0.06f;  // letter-spacing, of the font's height
 constexpr float kMaxWidth   = 0.80f;  // of the screen's width; longer credits are set smaller
 constexpr float kBrightness = 1.6f;   // linear HDR: a little over white, so it blooms slightly
 
@@ -68,11 +70,27 @@ float InnerEdge() {
     return 3.0f + z2 - std::sqrt((3.0f - z1) * (3.0f + z1 + 2.0f * z2));
 }
 
+// Michroma, embedded in the .scr (see THIRD_PARTY_NOTICES.md), added for this process alone:
+// nothing is installed on the machine. Once; the font stays loaded until the process ends.
+void LoadEmbeddedFont() {
+    static bool loaded = false;
+    if (loaded) return;
+    loaded = true;
+    HRSRC   res  = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_CREDITS_FONT), MAKEINTRESOURCEW(10));  // RT_RCDATA
+    HGLOBAL data = res ? LoadResource(nullptr, res) : nullptr;
+    DWORD   count = 0;
+    if (!data || !AddFontMemResourceEx(LockResource(data), SizeofResource(nullptr, res), nullptr, &count)) {
+        Log("credits: the embedded font could not be loaded");
+    }
+}
+
 HFONT MakeFont(int pixels) {
-    // A light, open sans, as film titles are set. Segoe UI Light is on every Windows since 7;
-    // Bahnschrift Light is the fallback.
-    for (const wchar_t* face : {L"Segoe UI Light", L"Bahnschrift Light"}) {
-        HFONT font = CreateFontW(-pixels, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
+    // Michroma: squared, wide and even, like the titles of a film set in space. It has one weight.
+    // Segoe UI Light (on every Windows since 7) and Bahnschrift Light are the fallbacks.
+    LoadEmbeddedFont();
+    for (const wchar_t* face : {L"Michroma", L"Segoe UI Light", L"Bahnschrift Light"}) {
+        const int weight = std::wcscmp(face, L"Michroma") == 0 ? FW_NORMAL : FW_LIGHT;
+        HFONT font = CreateFontW(-pixels, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
                                  CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, face);
         if (!font) continue;
         HDC      dc  = CreateCompatibleDC(nullptr);
@@ -100,7 +118,7 @@ render::TextImage Rasterize(const Credit& credit, int screenWidth, int screenHei
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (font) DeleteObject(font);
         font     = MakeFont(pixels);
-        tracking = std::max(1, static_cast<int>(std::lround(pixels * 0.12)));  // wide letter-spacing
+        tracking = std::max(1, static_cast<int>(std::lround(pixels * kTracking)));
         SelectObject(dc, font);
         SetTextCharacterExtra(dc, tracking);
         widest = 0;

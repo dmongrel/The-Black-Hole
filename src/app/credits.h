@@ -24,6 +24,9 @@ std::wstring CreditsPath();
 std::wstring CreditsText();
 std::wstring DefaultCreditsText();
 
+// The credits typeface's licence (SIL OFL 1.1), embedded with the font, "\r\n" line ends.
+std::wstring FontLicenseText();
+
 std::vector<Credit> ParseCredits(const std::wstring& text);
 std::vector<Credit> LoadCredits();
 

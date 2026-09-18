@@ -6,6 +6,8 @@ Status: built (2026-09-18). Changes after review:
   so the letters dissolve.
 - About a fifth of the particles hang back 0.8–2.4 s before the flow takes them.
 - Particles fade out halfway round the spiral onto the disk.
+- The typeface is Michroma (SIL OFL 1.1, the same one GoLLM uses), embedded with its licence. See
+  THIRD_PARTY_NOTICES.md.
 
 ## What it does
 

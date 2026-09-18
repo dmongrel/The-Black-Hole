@@ -84,8 +84,9 @@ so any frame can be captured again.
 
 A list of credits plays over the black hole like a film's titles
 ([`src/app/credit_roll.cpp`](src/app/credit_roll.cpp)). Each one flies in from behind the camera
-and comes to rest in the lower left, set left-justified in a light, widely tracked sans (Segoe UI
-Light). A colon splits a credit into two lines: the colon is dropped, and each half becomes a line.
+and comes to rest in the lower left, set left-justified in Michroma, a squared, wide typeface.
+The font is embedded in the `.scr` and loaded for the screen saver alone
+(see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)). A colon splits a credit into two lines: the colon is dropped, and each half becomes a line.
 
 After a few seconds' hold the whole line pixelates, its letters coarsening into blocks. Each block
 then becomes one particle, exactly where it was and just as bright, so nothing is added to the
@@ -160,7 +161,7 @@ disk at run time.
 ```
 shaders/            fullscreen.vert, blackhole.frag (the ray tracer), bloom_*.comp, composite.frag,
                     text.* and particle.* (the credits)
-assets/             credits-default.txt, the built-in credits list
+assets/             credits-default.txt, the built-in credits list; fonts/, Michroma and its licence
 docs/               plan-credits.md, the credits design
 src/main.cpp        argument dispatch
 src/app/            window host, argument parsing, input rules, logging, settings dialog, credits
