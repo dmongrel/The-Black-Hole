@@ -39,8 +39,8 @@ constexpr float kTracking   = 0.06f;  // letter-spacing, of the font's height
 constexpr float kMaxWidth   = 0.80f;  // of the screen's width; longer credits are set smaller
 constexpr float kBrightness = 1.6f;   // linear HDR: a little over white, so it blooms slightly
 
-constexpr size_t kParticleBudget = 30000;
-constexpr float  kFontPerBlock   = 13.0f; // blocks are about this fraction of the font's height
+constexpr size_t kParticleBudget = 60000;  // under render::kMaxOverlayParticles
+constexpr float  kFontPerBlock   = 20.0f; // blocks are about this fraction of the font's height
 constexpr float  kRoundLight     = 3.9f;  // a round glow carries this much less light than a flat
                                           // square the same size, so it is made brighter by it
 constexpr float  kSpin           = 0.95f;  // must match SPIN in shaders/blackhole.frag
@@ -196,7 +196,7 @@ void CreditRoll::StartCredit(size_t index) {
     // Blocks big enough to read as pixelation at this size, and few enough for the budget.
     size_t inked = 0;
     for (uint8_t c : text_.coverage) inked += c > 0;
-    block_ = std::max(3, static_cast<int>(std::lround(fontPixels / kFontPerBlock)));
+    block_ = std::max(2, static_cast<int>(std::lround(fontPixels / kFontPerBlock)));
     while (inked / static_cast<size_t>(block_ * block_) > kParticleBudget) ++block_;
     Log("credits: %u of %u, %dx%d px, blocks of %d", static_cast<unsigned>(index_ + 1),
         static_cast<unsigned>(credits_.size()), text_.width, text_.height, block_);
