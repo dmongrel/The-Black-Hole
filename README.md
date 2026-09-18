@@ -80,6 +80,29 @@ Every one and a half to two and a half minutes the camera also breaks pattern wi
 The development window (`/w`) keeps the original fixed orbit, which is a function of time alone,
 so any frame can be captured again.
 
+### The credits
+
+A list of credits plays over the black hole like a film's titles
+([`src/app/credit_roll.cpp`](src/app/credit_roll.cpp)). Each one flies in from behind the camera
+and comes to rest in the lower left, set left-justified in a light, widely tracked sans (Segoe UI
+Light). A colon splits a credit into two lines: the colon is dropped, and each half becomes a line.
+
+After a few seconds' hold the text breaks up slowly from left to right into tens of thousands of
+particles. Most of them stream away at once. About a fifth are heavier and hang back for a moment
+before the flow takes them. The stream leaves the camera behind and arcs deep into the scene,
+across to the disk on the hole's left, then spirals with the disk's rotation towards its inner
+edge. The particles shrink, warm in colour and fade out halfway round. Near the hole they are
+lensed by an approximate point-lens bend, and they vanish behind the shadow.
+
+A second after the last particle of a credit is gone, the next credit comes in. After the last
+credit there is a minute's pause, then the list starts again. The credits play only on the
+primary monitor, and not in the preview.
+
+The list is edited in the Settings dialog (`/c`) and saved to
+`%APPDATA%\The-Black-Hole\credits.txt`, one credit per line. **Restore defaults** brings back
+the built-in list ([`assets/credits-default.txt`](assets/credits-default.txt)); an empty list turns
+the credits off.
+
 ## Building
 
 The build copies [Nuke-Saver](../Nuke-Saver)'s: a plain Makefile driving MinGW-w64.
@@ -112,7 +135,7 @@ disk at run time.
 | (none) or `/s` | Full screen on every monitor; any key, click or mouse movement ends it |
 | `/w` | A resizable window, for development, on the fixed camera; Esc closes it |
 | `/p <hwnd>` | Live preview in the Screen Saver Settings dialog (roaming camera, smaller star map for a quick start) |
-| `/c` | Settings (there are none yet) |
+| `/c` | Settings: the credits list |
 | anything else | Exits immediately |
 
 ### Diagnostics
@@ -126,14 +149,19 @@ disk at run time.
 | `BLACK_HOLE_CAMERA=classic\|roaming` | Override the camera (`/s` roams, `/w` is classic) |
 | `BLACK_HOLE_SEED=<n>` | Fix the roaming camera's choices, so a run can be repeated |
 | `BLACK_HOLE_EVENT=dive\|overhead\|swoop` | Roaming camera: every event is this one, the first after 8 seconds |
+| `BLACK_HOLE_CREDITS=<file>` | Read the credits from this file instead of the saved list |
+| `BLACK_HOLE_CREDITS_AT=<seconds>` | Start the credits this far into their sequence (the first break-up is at about 10) |
 | `BLACK_HOLE_VALIDATE=1` | Enable the Khronos validation layer if it is installed |
 
 ## Layout
 
 ```
-shaders/            fullscreen.vert, blackhole.frag (the ray tracer), bloom_*.comp, composite.frag
+shaders/            fullscreen.vert, blackhole.frag (the ray tracer), bloom_*.comp, composite.frag,
+                    text.* and particle.* (the credits)
+assets/             credits-default.txt, the built-in credits list
+docs/               plan-credits.md, the credits design
 src/main.cpp        argument dispatch
-src/app/            window host, argument parsing, input rules, logging
+src/app/            window host, argument parsing, input rules, logging, settings dialog, credits
 src/render/         Vulkan renderer, camera paths, skybox generator, embedded-shader lookup
 third_party/volk/   Vulkan meta-loader
 tools/              embed_shaders.sh (SPIR-V -> C arrays)

@@ -14,6 +14,7 @@
 #include <string>
 
 #include "render/camera.h"
+#include "render/overlay.h"
 
 namespace render {
 
@@ -35,8 +36,9 @@ public:
     void DetachWindow(HWND hwnd);
 
     // Draws every attached window. `seconds` is animation time (the disk's turbulence); `camera`
-    // is where the frame is seen from.
-    void RenderFrame(double seconds, const CameraPose& camera);
+    // is where the frame is seen from. `overlay`, when given, is drawn on `overlayWindow` only.
+    void RenderFrame(double seconds, const CameraPose& camera, const Overlay* overlay = nullptr,
+                     HWND overlayWindow = nullptr);
 
     // Writes the next frame presented to `hwnd` to a 32-bit BMP at `path`.
     void RequestCapture(HWND hwnd, const std::string& path);

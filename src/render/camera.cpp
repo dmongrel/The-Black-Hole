@@ -50,6 +50,28 @@ CameraPose Pose(float azimuth, float inclination, float distance, float roll, fl
 
 }  // namespace
 
+CameraBasis Basis(const CameraPose& pose) {
+    const float* p = pose.position;
+    float        f[3] = {pose.target[0] - p[0], pose.target[1] - p[1], pose.target[2] - p[2]};
+    const float  fl   = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+    for (float& v : f) v /= fl;
+    float       r[3] = {-f[2], 0.0f, f[0]};  // cross(forward, +y)
+    const float rl   = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+    r[0] /= rl;
+    r[2] /= rl;
+    const float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+
+    const float c = std::cos(pose.roll), s = std::sin(pose.roll);
+    CameraBasis b{};
+    for (int i = 0; i < 3; ++i) {
+        b.position[i] = p[i];
+        b.right[i]    = r[i] * c + u[i] * s;
+        b.up[i]       = u[i] * c - r[i] * s;
+        b.forward[i]  = f[i];
+    }
+    return b;
+}
+
 CameraPose ClassicCamera(double seconds) {
     const float t = static_cast<float>(seconds);
     return Pose(0.6f + t * kBaseOrbit, (7.0f + 4.0f * std::sin(t * 0.037f)) * kDegrees,

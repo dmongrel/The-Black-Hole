@@ -1,9 +1,28 @@
 #include <windows.h>
+#include "src/app/resource.h"
 
 // String 1 is the name Windows shows in the Screen Saver Settings list.
 STRINGTABLE
 BEGIN
     1 "The Black Hole"
+END
+
+// The credits played until the user saves a list of their own.
+IDR_DEFAULT_CREDITS RCDATA "assets/credits-default.txt"
+
+// Settings (/c): the credits list.
+IDD_SETTINGS DIALOGEX 0, 0, 340, 214
+STYLE DS_MODALFRAME | DS_CENTER | DS_SHELLFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "The Black Hole - Settings"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Credits, one per line. A colon splits a credit into two lines, e.g. ""Directed by: Christopher Nolan"". Leave the box empty to turn the credits off.",
+                    -1, 7, 7, 326, 18
+    EDITTEXT        IDC_CREDITS, 7, 28, 326, 156,
+                    ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Restore defaults", IDC_DEFAULTS, 7, 192, 72, 15
+    DEFPUSHBUTTON   "OK", IDOK, 229, 192, 50, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 283, 192, 50, 15
 END
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "the-black-hole.manifest"

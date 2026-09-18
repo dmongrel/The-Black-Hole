@@ -86,7 +86,7 @@ $(OBJDIR)/gen/%.o: $(GENDIR)/%.c Makefile | $(BUILDTMP)
 
 # ---- resources -------------------------------------------------------------------------
 
-$(RES): the-black-hole.rc the-black-hole.manifest | $(BUILDTMP)
+$(RES): the-black-hole.rc the-black-hole.manifest src/app/resource.h assets/credits-default.txt | $(BUILDTMP)
 	$(WINDRES) the-black-hole.rc -O coff -o $@
 
 # ---- link ------------------------------------------------------------------------------

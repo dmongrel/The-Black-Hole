@@ -60,6 +60,13 @@ struct BloomPush {
     float intensity;
 };
 
+// Must match shaders/text.vert and text.frag.
+struct TextPush {
+    float rect[4];
+    float params[4];  // scale, alpha, sweep, aspect
+    float more[4];    // tan(fov / 2), brightness, unused, unused
+};
+
 // Must match shaders/composite.frag.
 struct CompositePush {
     float bloom;
@@ -71,11 +78,6 @@ struct CompositePush {
 struct Vec3 {
     float x, y, z;
 };
-Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
-Vec3 Cross(Vec3 a, Vec3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
-Vec3 Normalize(Vec3 a) { return a * (1.0f / std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z)); }
 
 void Store(float out[4], Vec3 v, float w) {
     out[0] = v.x;
@@ -85,18 +87,14 @@ void Store(float out[4], Vec3 v, float w) {
 }
 
 ScenePush MakeScenePush(const CameraPose& pose, float aspect, double seconds) {
-    const Vec3 pos    = {pose.position[0], pose.position[1], pose.position[2]};
-    const Vec3 target = {pose.target[0], pose.target[1], pose.target[2]};
-    const Vec3 fwd    = Normalize(target - pos);
-    const Vec3 right  = Normalize(Cross(fwd, {0.0f, 1.0f, 0.0f}));
-    const Vec3 up     = Cross(right, fwd);
-    const float c = std::cos(pose.roll), s = std::sin(pose.roll);
+    const CameraBasis b  = Basis(pose);
+    auto              v3 = [](const float* v) { return Vec3{v[0], v[1], v[2]}; };
 
     ScenePush pc{};
-    Store(pc.camPos, pos, pose.tanHalfFov);
-    Store(pc.camRight, right * c + up * s, aspect);
-    Store(pc.camUp, up * c - right * s, static_cast<float>(std::fmod(seconds, 100000.0)));
-    Store(pc.camFwd, fwd, 0.0f);
+    Store(pc.camPos, v3(b.position), pose.tanHalfFov);
+    Store(pc.camRight, v3(b.right), aspect);
+    Store(pc.camUp, v3(b.up), static_cast<float>(std::fmod(seconds, 100000.0)));
+    Store(pc.camFwd, v3(b.forward), 0.0f);
     return pc;
 }
 
@@ -215,6 +213,23 @@ struct Renderer::Impl {
     VkRenderPass          scenePass      = VK_NULL_HANDLE;
     VkPipeline            scenePipeline  = VK_NULL_HANDLE;
 
+    // The credits overlay, drawn into the HDR image in the scene pass, after the black hole: a
+    // credit's text and the particles it breaks into. One window at a time shows it.
+    VkPipelineLayout textLayout       = VK_NULL_HANDLE;
+    VkPipeline       textPipeline     = VK_NULL_HANDLE;
+    VkPipelineLayout particleLayout   = VK_NULL_HANDLE;
+    VkPipeline       particlePipeline = VK_NULL_HANDLE;
+    VkDescriptorPool textPool         = VK_NULL_HANDLE;
+    VkDescriptorSet  textSet          = VK_NULL_HANDLE;
+    VkImage          textImage        = VK_NULL_HANDLE;
+    VkDeviceMemory   textMemory       = VK_NULL_HANDLE;
+    VkImageView      textView         = VK_NULL_HANDLE;
+    uint32_t         textId           = 0;
+    // Written by the CPU each frame; one per frame in flight, so a frame's fence covers its own.
+    std::array<VkBuffer, kFramesInFlight>       particleBuffers{};
+    std::array<VkDeviceMemory, kFramesInFlight> particleMemory{};
+    std::array<void*, kFramesInFlight>          particleMapped{};
+
     // The bloom chain.
     VkDescriptorSetLayout bloomSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout      bloomLayout    = VK_NULL_HANDLE;
@@ -239,12 +254,19 @@ struct Renderer::Impl {
             vkDeviceWaitIdle(device);
             for (auto& t : targets) DestroyTarget(*t);
             targets.clear();
-            for (VkPipeline p : {scenePipeline, downPipeline, upPipeline, compositePipeline}) {
+            DestroyText();
+            for (int i = 0; i < kFramesInFlight; ++i) {
+                vkDestroyBuffer(device, particleBuffers[i], nullptr);
+                vkFreeMemory(device, particleMemory[i], nullptr);
+            }
+            vkDestroyDescriptorPool(device, textPool, nullptr);
+            for (VkPipeline p : {scenePipeline, textPipeline, particlePipeline, downPipeline, upPipeline,
+                                 compositePipeline}) {
                 vkDestroyPipeline(device, p, nullptr);
             }
             vkDestroyRenderPass(device, scenePass, nullptr);
             vkDestroyRenderPass(device, presentPass, nullptr);
-            for (VkPipelineLayout l : {sceneLayout, bloomLayout, compositeLayout}) {
+            for (VkPipelineLayout l : {sceneLayout, textLayout, particleLayout, bloomLayout, compositeLayout}) {
                 vkDestroyPipelineLayout(device, l, nullptr);
             }
             vkDestroyDescriptorPool(device, scenePool, nullptr);
@@ -337,6 +359,7 @@ struct Renderer::Impl {
         CreateSkybox(skyboxSize);
         CreateLayouts();
         CreateScenePipeline();
+        CreateOverlay();
         downPipeline = CreateComputePipeline("bloom_down.comp");
         upPipeline   = CreateComputePipeline("bloom_up.comp");
     }
@@ -564,8 +587,8 @@ struct Renderer::Impl {
         VkPushConstantRange        range{stage, 0, pushBytes};
         VkPipelineLayoutCreateInfo plci{};
         plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        plci.setLayoutCount         = 1;
-        plci.pSetLayouts            = &set;
+        plci.setLayoutCount         = set ? 1 : 0;
+        plci.pSetLayouts            = set ? &set : nullptr;
         plci.pushConstantRangeCount = 1;
         plci.pPushConstantRanges    = &range;
         VkPipelineLayout layout;
@@ -681,7 +704,15 @@ struct Renderer::Impl {
 
     // A full-screen triangle with `fragment` shading every pixel of `pass`'s attachment.
     VkPipeline CreateFullscreenPipeline(VkRenderPass pass, VkPipelineLayout layout, const char* fragment) {
-        VkShaderModule modules[2] = {CreateModule("fullscreen.vert"), CreateModule(fragment)};
+        return CreateGraphicsPipeline(pass, layout, "fullscreen.vert", fragment, false, nullptr);
+    }
+
+    // Triangles from `vertex` and `fragment`, either replacing what is in the attachment or, when
+    // `additive`, adding to it. `input` describes vertex buffers, if the vertex shader reads any.
+    VkPipeline CreateGraphicsPipeline(VkRenderPass pass, VkPipelineLayout layout, const char* vertex,
+                                      const char* fragment, bool additive,
+                                      const VkPipelineVertexInputStateCreateInfo* input) {
+        VkShaderModule modules[2] = {CreateModule(vertex), CreateModule(fragment)};
 
         VkPipelineShaderStageCreateInfo stages[2]{};
         for (int i = 0; i < 2; ++i) {
@@ -716,6 +747,15 @@ struct Renderer::Impl {
         VkPipelineColorBlendAttachmentState blendAttachment{};
         blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        if (additive) {
+            blendAttachment.blendEnable         = VK_TRUE;
+            blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            blendAttachment.colorBlendOp        = VK_BLEND_OP_ADD;
+            blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            blendAttachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+        }
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blend.attachmentCount = 1;
@@ -731,7 +771,7 @@ struct Renderer::Impl {
         gpci.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         gpci.stageCount          = 2;
         gpci.pStages             = stages;
-        gpci.pVertexInputState   = &vertexInput;
+        gpci.pVertexInputState   = input ? input : &vertexInput;
         gpci.pInputAssemblyState = &assembly;
         gpci.pViewportState      = &viewport;
         gpci.pRasterizationState = &raster;
@@ -768,6 +808,124 @@ struct Renderer::Impl {
                                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
         scenePipeline = CreateFullscreenPipeline(scenePass, sceneLayout, "blackhole.frag");
+    }
+
+    void CreateOverlay() {
+        textLayout   = CreatePipelineLayout(sceneSetLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                            sizeof(TextPush));
+        textPipeline = CreateGraphicsPipeline(scenePass, textLayout, "text.vert", "text.frag", true, nullptr);
+
+        // Particles are instances: each reads its position, size and light as vertex attributes.
+        VkVertexInputBindingDescription   binding{0, sizeof(OverlayParticle), VK_VERTEX_INPUT_RATE_INSTANCE};
+        VkVertexInputAttributeDescription attributes[2] = {
+            {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
+            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
+        };
+        VkPipelineVertexInputStateCreateInfo input{};
+        input.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        input.vertexBindingDescriptionCount   = 1;
+        input.pVertexBindingDescriptions      = &binding;
+        input.vertexAttributeDescriptionCount = 2;
+        input.pVertexAttributeDescriptions    = attributes;
+        particleLayout   = CreatePipelineLayout(VK_NULL_HANDLE, VK_SHADER_STAGE_VERTEX_BIT, sizeof(ScenePush));
+        particlePipeline = CreateGraphicsPipeline(scenePass, particleLayout, "particle.vert", "particle.frag", true,
+                                                  &input);
+
+        VkDescriptorPoolSize       size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        VkDescriptorPoolCreateInfo dpci{};
+        dpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        dpci.maxSets       = 1;
+        dpci.poolSizeCount = 1;
+        dpci.pPoolSizes    = &size;
+        Check(vkCreateDescriptorPool(device, &dpci, nullptr, &textPool), "vkCreateDescriptorPool(text)");
+        textSet = AllocateSet(textPool, sceneSetLayout);
+
+        const VkDeviceSize bytes = kMaxOverlayParticles * sizeof(OverlayParticle);
+        for (int i = 0; i < kFramesInFlight; ++i) {
+            CreateBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, particleBuffers[i],
+                         particleMemory[i]);
+            Check(vkMapMemory(device, particleMemory[i], 0, bytes, 0, &particleMapped[i]), "vkMapMemory(particles)");
+        }
+    }
+
+    void DestroyText() {
+        vkDestroyImageView(device, textView, nullptr);
+        vkDestroyImage(device, textImage, nullptr);
+        vkFreeMemory(device, textMemory, nullptr);
+        textView   = VK_NULL_HANDLE;
+        textImage  = VK_NULL_HANDLE;
+        textMemory = VK_NULL_HANDLE;
+    }
+
+    // A new credit's glyphs. Rare (one per credit), so the simplest safe replacement will do:
+    // wait for the GPU to finish with the old texture, then build the new one.
+    void UploadText(const TextImage& text) {
+        vkDeviceWaitIdle(device);
+        DestroyText();
+        textId = text.id;
+        if (text.width <= 0 || text.height <= 0) return;
+
+        const VkExtent2D   extent = {static_cast<uint32_t>(text.width), static_cast<uint32_t>(text.height)};
+        const VkDeviceSize bytes  = text.coverage.size();
+        VkBuffer           staging;
+        VkDeviceMemory     stagingMemory;
+        CreateBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, stagingMemory);
+        void* mapped = nullptr;
+        Check(vkMapMemory(device, stagingMemory, 0, bytes, 0, &mapped), "vkMapMemory(text)");
+        std::memcpy(mapped, text.coverage.data(), bytes);
+        vkUnmapMemory(device, stagingMemory);
+
+        CreateImage(VK_FORMAT_R8_UNORM, extent, 1, false, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    textImage, textMemory);
+        OneShot([&](VkCommandBuffer cmd) {
+            ImageBarrier(cmd, textImage, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                         VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            VkBufferImageCopy region{};
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent      = {extent.width, extent.height, 1};
+            vkCmdCopyBufferToImage(cmd, staging, textImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            ImageBarrier(cmd, textImage, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        });
+        vkDestroyBuffer(device, staging, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+
+        textView = CreateView(textImage, VK_FORMAT_R8_UNORM, VK_IMAGE_VIEW_TYPE_2D, 0, 1, 1);
+        WriteImage(textSet, 0, textView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
+    }
+
+    // Inside the scene pass, after the black hole. `scene` is that pass's camera.
+    void RecordOverlay(VkCommandBuffer cmd, const Target& t, const Overlay& overlay, const ScenePush& scene) {
+        if (overlay.text && overlay.alpha > 0.0f && textView) {
+            TextPush p{};
+            std::memcpy(p.rect, overlay.rect, sizeof(p.rect));
+            p.params[0] = overlay.scale;
+            p.params[1] = overlay.alpha;
+            p.params[2] = overlay.sweep;
+            p.params[3] = scene.camRight[3];
+            p.more[0]   = scene.camPos[3];
+            p.more[1]   = overlay.brightness;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout, 0, 1, &textSet, 0, nullptr);
+            vkCmdPushConstants(cmd, textLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p),
+                               &p);
+            vkCmdDraw(cmd, 6, 1, 0, 0);
+        }
+
+        const size_t count = std::min(overlay.particles.size(), kMaxOverlayParticles);
+        if (count > 0) {
+            std::memcpy(particleMapped[t.frameIndex], overlay.particles.data(), count * sizeof(OverlayParticle));
+            ScenePush p = scene;
+            p.camFwd[3] = static_cast<float>(t.extent.height);
+            VkDeviceSize offset = 0;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipeline);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &particleBuffers[t.frameIndex], &offset);
+            vkCmdPushConstants(cmd, particleLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);
+            vkCmdDraw(cmd, 6, static_cast<uint32_t>(count), 0, 0);
+        }
     }
 
     void CreatePresentPipeline(VkFormat format) {
@@ -1086,8 +1244,9 @@ struct Renderer::Impl {
         for (uint32_t l = levels - 1; l-- > 0;) dispatch(upPipeline, t.upSets[l], l, false, 1.0f);
     }
 
-    void Draw(Target& t, double seconds, const CameraPose& camera) {
+    void Draw(Target& t, double seconds, const CameraPose& camera, const Overlay* overlay) {
         if (t.stale && !BuildSwapchain(t)) return;
+        if (overlay && overlay->text && overlay->text->id != textId) UploadText(*overlay->text);
 
         Frame& f = t.frames[t.frameIndex];
         vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
@@ -1131,6 +1290,7 @@ struct Renderer::Impl {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout, 0, 1, &sceneSet, 0, nullptr);
         vkCmdPushConstants(cmd, sceneLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(scene), &scene);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        if (overlay) RecordOverlay(cmd, t, *overlay, scene);
         vkCmdEndRenderPass(cmd);
 
         // 2. Bloom.
@@ -1250,10 +1410,10 @@ void Renderer::DetachWindow(HWND hwnd) {
     }
 }
 
-void Renderer::RenderFrame(double seconds, const CameraPose& camera) {
+void Renderer::RenderFrame(double seconds, const CameraPose& camera, const Overlay* overlay, HWND overlayWindow) {
     for (auto& t : impl_->targets) {
         try {
-            impl_->Draw(*t, seconds, camera);
+            impl_->Draw(*t, seconds, camera, t->hwnd == overlayWindow ? overlay : nullptr);
         } catch (const std::exception& e) {
             // A lost surface or device leaves this window black rather than ending the saver.
             app::Log("draw %p failed: %s", static_cast<void*>(t->hwnd), e.what());

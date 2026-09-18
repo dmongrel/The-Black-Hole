@@ -15,6 +15,16 @@ struct CameraPose {
     float tanHalfFov;  // vertical
 };
 
+// The pose as an orthonormal frame: where the camera is and which ways are right, up (both
+// turned by the roll) and forward. The ray tracer and the credits both use exactly this.
+struct CameraBasis {
+    float position[3];
+    float right[3];
+    float up[3];
+    float forward[3];
+};
+CameraBasis Basis(const CameraPose& pose);
+
 // The original path: a slow orbit a few degrees above the disk, a function of time alone, so a
 // frame at a given time can always be captured again. Development and captures use it.
 CameraPose ClassicCamera(double seconds);

@@ -2,6 +2,7 @@
 
 #include <windowsx.h>
 
+#include "app/credit_roll.h"
 #include "app/input_watcher.h"
 #include "app/log.h"
 #include "render/renderer.h"
@@ -221,8 +222,24 @@ std::optional<render::RoamingCamera> CameraFromEnvironment(bool roamByDefault, d
     return camera;
 }
 
-// Shared by full-screen and windowed runs.
-void RenderLoop(HostState& host, bool roamByDefault) {
+// The credits play on `window`, if it is given and the list has any. BLACK_HOLE_CREDITS_AT
+// starts them that many seconds into their sequence, to capture a moment of it.
+std::optional<CreditRoll> CreditsFor(HWND window) {
+    if (!window) return std::nullopt;
+    std::vector<Credit> credits = LoadCredits();
+    if (credits.empty()) return std::nullopt;
+    RECT rc{};
+    GetClientRect(window, &rc);
+    return CreditRoll(std::move(credits), rc.right, rc.bottom);
+}
+
+double CreditsOffsetFromEnvironment() {
+    const char* t = std::getenv("BLACK_HOLE_CREDITS_AT");
+    return t ? std::atof(t) : 0.0;
+}
+
+// Shared by all three kinds of run. `creditsWindow` shows the credits; nullptr for none.
+void RenderLoop(HostState& host, bool roamByDefault, HWND creditsWindow) {
     LARGE_INTEGER freq{}, start{};
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
@@ -231,6 +248,8 @@ void RenderLoop(HostState& host, bool roamByDefault) {
     const double         offset    = TimeOffsetFromEnvironment();
     bool                 requested = false;
     auto                 roaming   = CameraFromEnvironment(roamByDefault, offset);
+    auto                 credits   = host.renderer ? CreditsFor(creditsWindow) : std::nullopt;
+    const double         creditsAt = CreditsOffsetFromEnvironment();
     if (!roaming) Log("camera: classic");
     double previous = 0.0;
 
@@ -274,7 +293,8 @@ void RenderLoop(HostState& host, bool roamByDefault) {
             roaming ? roaming->Advance(dt) : render::ClassicCamera(host.elapsed + offset);
 
         if (host.renderer) {
-            host.renderer->RenderFrame(host.elapsed + offset, pose);  // FIFO present paces the loop
+            const render::Overlay* overlay = credits ? &credits->Update(host.elapsed + creditsAt, pose) : nullptr;
+            host.renderer->RenderFrame(host.elapsed + offset, pose, overlay, creditsWindow);  // FIFO paces the loop
         } else {
             Sleep(16);
         }
@@ -326,7 +346,13 @@ int RunFullScreen(HINSTANCE instance) {
         // A pointer that wanders onto a second monitor's window must still end the run.
         SetCapture(host.windows.front());
         ShowCursor(FALSE);
-        RenderLoop(host, true);
+        // The credits play on the primary monitor only; the others show the black hole alone.
+        HWND       primary        = nullptr;
+        const auto primaryMonitor = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        for (HWND hwnd : host.windows) {
+            if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) == primaryMonitor) primary = hwnd;
+        }
+        RenderLoop(host, true, primary ? primary : host.windows.front());
         ReleaseCapture();
         ShowCursor(TRUE);
     }
@@ -356,7 +382,7 @@ int RunWindowed(HINSTANCE instance) {
         ShowWindow(hwnd, SW_SHOW);
         host.windows.push_back(hwnd);
         if (host.renderer) host.renderer->AttachWindow(hwnd);
-        RenderLoop(host, false);
+        RenderLoop(host, false, hwnd);
     }
 
     Teardown(host, instance, kWindowedClass);
@@ -403,15 +429,11 @@ int RunPreview(HINSTANCE instance, HWND parent) {
         host.renderer = render::Renderer::Create(1024);
         Log("renderer: %s", host.renderer ? "vulkan" : "none (black preview)");
         if (host.renderer && !host.renderer->AttachWindow(hwnd)) host.renderer.reset();
-        RenderLoop(host, true);  // the preview shows what the screen saver will: roaming
+        // The preview shows what the screen saver will, roaming, but not the credits: at
+        // thumbnail size they would be a few unreadable pixels.
+        RenderLoop(host, true, nullptr);
     }
     Teardown(host, instance, kPreviewClass);
-    return 0;
-}
-
-int RunConfigure(HWND owner) {
-    MessageBoxW(owner, L"The Black Hole has no settings yet.", L"The Black Hole",
-                MB_OK | MB_ICONINFORMATION);
     return 0;
 }
 
