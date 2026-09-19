@@ -111,10 +111,52 @@ A second after the last particle of a credit is gone, the next credit comes in. 
 credit there is a minute's pause, then the list starts again. The credits play only on the
 primary monitor, and not in the preview.
 
-The list is edited in the Settings dialog (`/c`) and saved to
-`%APPDATA%\The-Black-Hole\credits.txt`, one credit per line. **Restore defaults** brings back
-the built-in list ([`assets/credits-default.txt`](assets/credits-default.txt)); an empty list turns
-the credits off.
+#### Setting the credits text
+
+Open the Settings dialog: **Settings…** in Windows' Screen Saver Settings, or run the `.scr` with
+`/c`. Type the credits into the box, one per line, and press **OK**. They are saved as UTF-8 to
+`%APPDATA%\The-Black-Hole\credits.txt`, which you can also edit by hand. The list is read when the
+screen saver starts, so a change shows the next time it runs.
+
+- **One line per credit.** Blank lines are skipped, and spaces at either end of a line are trimmed.
+  The credits play in the order they are listed.
+- **A colon splits a credit into two lines.** `Directed by: Christopher Nolan` shows as
+  `Directed by` above `Christopher Nolan`, both left-justified. The colon is dropped, and only the
+  first colon splits, so a later one stays in the text. A line with no colon is one line of text.
+- **An empty box turns the credits off.**
+- **Restore defaults** puts the built-in list back in the box
+  ([`assets/credits-default.txt`](assets/credits-default.txt)). It is not saved until you press
+  **OK**.
+- **Font licence** shows the licence for Michroma, the typeface the credits are set in.
+
+For example:
+
+```
+Directed by: Christopher Nolan
+Special Thanks to: Christopher Nolan
+Keeping It Real: Sci-Man Dan
+```
+
+#### The Sci-Man Dan keyword: the Earth (ROUND)
+
+A credit that names **Sci-Man Dan** gets the Earth animation described above. Any credit whose text
+contains the name triggers it, on either line. The check ignores case, spaces, hyphens and
+punctuation, so `Sci-Man Dan`, `sci man dan` and `SciManDan` all count. The credit holds on screen
+while:
+
+1. the Earth sweeps in, clear of the black hole;
+2. the label *Earth (ROUND)* 👍 appears beneath it halfway through its entrance;
+3. the Earth breaks into particles that stream into the hole.
+
+The credit's own shake and break-up start only when the last of the Earth has gone. Other credits
+play as usual. To see the effect, keep a credit naming Sci-Man Dan in the list. It is the fifth
+credit in the built-in list. To test it straight away:
+
+```
+BLACK_HOLE_CREDITS=dan.txt ./the-black-hole.scr /w
+```
+
+Here `dan.txt` holds a line such as `Keeping It Real: Sci-Man Dan`.
 
 ## Building
 
