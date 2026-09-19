@@ -15,6 +15,10 @@ IDR_DEFAULT_CREDITS RCDATA "assets/credits-default.txt"
 IDR_CREDITS_FONT RCDATA "assets/fonts/Michroma-Regular.ttf"
 IDR_FONT_LICENSE RCDATA "assets/fonts/Michroma-OFL.txt"
 
+// The Earth one credit brings on: NASA's Blue Marble and Black Marble (city lights), public domain.
+IDR_EARTH_DAY   RCDATA "assets/earth/earth-day.jpg"
+IDR_EARTH_NIGHT RCDATA "assets/earth/earth-night.jpg"
+
 // Settings (/c): the credits list.
 IDD_SETTINGS DIALOGEX 0, 0, 340, 214
 STYLE DS_MODALFRAME | DS_CENTER | DS_SHELLFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU

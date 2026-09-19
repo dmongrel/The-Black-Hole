@@ -39,7 +39,7 @@ CXXFLAGS = -std=c++20 $(WARN) $(DEPFLAGS) -O2 -municode
 CFLAGS   = -std=c11 $(WARN) $(DEPFLAGS) -O2
 
 LDFLAGS  = -mwindows -municode -static
-LDLIBS   = -lgdi32 -lshell32 -luser32
+LDLIBS   = -lgdi32 -lshell32 -luser32 -lole32 -lwindowscodecs
 
 # ---- sources ---------------------------------------------------------------------------
 
@@ -87,7 +87,8 @@ $(OBJDIR)/gen/%.o: $(GENDIR)/%.c Makefile | $(BUILDTMP)
 # ---- resources -------------------------------------------------------------------------
 
 $(RES): the-black-hole.rc the-black-hole.manifest src/app/resource.h assets/credits-default.txt \
-        assets/fonts/Michroma-Regular.ttf assets/fonts/Michroma-OFL.txt | $(BUILDTMP)
+        assets/fonts/Michroma-Regular.ttf assets/fonts/Michroma-OFL.txt \
+        assets/earth/earth-day.jpg assets/earth/earth-night.jpg | $(BUILDTMP)
 	$(WINDRES) the-black-hole.rc -O coff -o $@
 
 # ---- link ------------------------------------------------------------------------------

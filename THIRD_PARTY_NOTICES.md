@@ -1,7 +1,7 @@
 # Third-party notices
 
-The Black Hole builds two pieces of third-party work into `the-black-hole.scr`: the Michroma
-typeface and the volk Vulkan loader.
+The Black Hole builds three pieces of third-party work into `the-black-hole.scr`: the Michroma
+typeface, two NASA images of the Earth, and the volk Vulkan loader.
 
 ## Michroma
 
@@ -23,6 +23,29 @@ vendors:
     bytes   64344
 
 The font has not been subsetted, renamed or otherwise modified. It declares no Reserved Font Name.
+
+## NASA Blue Marble and Black Marble
+
+The Earth that one credit brings on is textured with two NASA images, which are in the public
+domain as works of the United States government. NASA does not endorse this project.
+
+- Surface: *Blue Marble: Next Generation*, December 2004, with topography and bathymetry
+  (NASA Earth Observatory, Reto Stöckli), from
+  https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x5400x2700.jpg
+- City lights: *Black Marble 2016* (NASA Earth Observatory, Joshua Stevens, from Suomi NPP VIIRS
+  data by Miguel Román, NASA GSFC), from
+  https://eoimages.gsfc.nasa.gov/images/imagerecords/144000/144898/BlackMarble_2016_01deg.jpg
+
+Both are scaled to 2048x1024. The city lights are converted to grey and thresholded, so that only
+the lights remain and the dark ground is black. They are embedded in the `.scr` as resources:
+
+    file    assets/earth/earth-day.jpg
+    sha256  a68b3b7f718b2611639c8da8c552fff123a7214cd1a10e462ac1ddce54f71b1c
+    bytes   325288
+
+    file    assets/earth/earth-night.jpg
+    sha256  444d9d2bfe258d38863d2885f820f8766c0db64f568cf4f5ec3b1c0c5b909055
+    bytes   70905
 
 ## volk
 

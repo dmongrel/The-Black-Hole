@@ -68,6 +68,16 @@ struct TextPush {
     float split[4];   // red x, y, blue x, y: offsets from green, in texture coordinates
 };
 
+// Must match shaders/earth.frag.
+struct EarthPush {
+    ScenePush scene;      // camFwd[3] = viewport height in pixels
+    float     center[4];  // xyz, w = radius
+    float     north[4];   // xyz, w = spin
+    float     east[4];    // xyz, w = block size in pixels
+    float     light[4];   // xyz, w = opacity
+};
+static_assert(sizeof(EarthPush) == 128);
+
 // Must match shaders/composite.frag.
 struct CompositePush {
     float bloom;
@@ -216,16 +226,29 @@ struct Renderer::Impl {
 
     // The credits overlay, drawn into the HDR image in the scene pass, after the black hole: a
     // credit's text and the particles it breaks into. One window at a time shows it.
+    // A line of text on the GPU: the credit, or the label under the Earth.
+    struct TextSlot {
+        VkImage         image  = VK_NULL_HANDLE;
+        VkDeviceMemory  memory = VK_NULL_HANDLE;
+        VkImageView     view   = VK_NULL_HANDLE;
+        VkDescriptorSet set    = VK_NULL_HANDLE;
+        uint32_t        id     = 0;
+    };
     VkPipelineLayout textLayout       = VK_NULL_HANDLE;
     VkPipeline       textPipeline     = VK_NULL_HANDLE;
     VkPipelineLayout particleLayout   = VK_NULL_HANDLE;
     VkPipeline       particlePipeline = VK_NULL_HANDLE;
-    VkDescriptorPool textPool         = VK_NULL_HANDLE;
-    VkDescriptorSet  textSet          = VK_NULL_HANDLE;
-    VkImage          textImage        = VK_NULL_HANDLE;
-    VkDeviceMemory   textMemory       = VK_NULL_HANDLE;
-    VkImageView      textView         = VK_NULL_HANDLE;
-    uint32_t         textId           = 0;
+    VkDescriptorPool overlayPool      = VK_NULL_HANDLE;
+    TextSlot         creditText, labelText;
+    // The Earth one credit brings on: its surface and night lights, uploaded when first shown.
+    VkDescriptorSetLayout earthSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout      earthLayout    = VK_NULL_HANDLE;
+    VkPipeline            earthPipeline  = VK_NULL_HANDLE;
+    VkDescriptorSet       earthSet       = VK_NULL_HANDLE;
+    VkImage               earthImages[2]{};
+    VkDeviceMemory        earthMemory[2]{};
+    VkImageView           earthViews[2]{};
+    uint32_t              earthId = 0;
     // Written by the CPU each frame; one per frame in flight, so a frame's fence covers its own.
     std::array<VkBuffer, kFramesInFlight>       particleBuffers{};
     std::array<VkDeviceMemory, kFramesInFlight> particleMemory{};
@@ -255,23 +278,26 @@ struct Renderer::Impl {
             vkDeviceWaitIdle(device);
             for (auto& t : targets) DestroyTarget(*t);
             targets.clear();
-            DestroyText();
+            DestroyText(creditText);
+            DestroyText(labelText);
+            DestroyEarth();
             for (int i = 0; i < kFramesInFlight; ++i) {
                 vkDestroyBuffer(device, particleBuffers[i], nullptr);
                 vkFreeMemory(device, particleMemory[i], nullptr);
             }
-            vkDestroyDescriptorPool(device, textPool, nullptr);
-            for (VkPipeline p : {scenePipeline, textPipeline, particlePipeline, downPipeline, upPipeline,
-                                 compositePipeline}) {
+            vkDestroyDescriptorPool(device, overlayPool, nullptr);
+            for (VkPipeline p : {scenePipeline, textPipeline, particlePipeline, earthPipeline, downPipeline,
+                                 upPipeline, compositePipeline}) {
                 vkDestroyPipeline(device, p, nullptr);
             }
             vkDestroyRenderPass(device, scenePass, nullptr);
             vkDestroyRenderPass(device, presentPass, nullptr);
-            for (VkPipelineLayout l : {sceneLayout, textLayout, particleLayout, bloomLayout, compositeLayout}) {
+            for (VkPipelineLayout l :
+                 {sceneLayout, textLayout, particleLayout, earthLayout, bloomLayout, compositeLayout}) {
                 vkDestroyPipelineLayout(device, l, nullptr);
             }
             vkDestroyDescriptorPool(device, scenePool, nullptr);
-            for (VkDescriptorSetLayout l : {sceneSetLayout, bloomSetLayout, compositeSetLayout}) {
+            for (VkDescriptorSetLayout l : {sceneSetLayout, earthSetLayout, bloomSetLayout, compositeSetLayout}) {
                 vkDestroyDescriptorSetLayout(device, l, nullptr);
             }
             vkDestroySampler(device, sampler, nullptr);
@@ -705,13 +731,17 @@ struct Renderer::Impl {
 
     // A full-screen triangle with `fragment` shading every pixel of `pass`'s attachment.
     VkPipeline CreateFullscreenPipeline(VkRenderPass pass, VkPipelineLayout layout, const char* fragment) {
-        return CreateGraphicsPipeline(pass, layout, "fullscreen.vert", fragment, false, nullptr);
+        return CreateGraphicsPipeline(pass, layout, "fullscreen.vert", fragment, Blend::Replace, nullptr);
     }
 
-    // Triangles from `vertex` and `fragment`, either replacing what is in the attachment or, when
-    // `additive`, adding to it. `input` describes vertex buffers, if the vertex shader reads any.
+    // How a pipeline's output meets what is already in the attachment: replacing it, adding to it
+    // (light), or covering it by the output's alpha (a solid thing in front).
+    enum class Blend { Replace, Add, Over };
+
+    // Triangles from `vertex` and `fragment`, blended by `blend`. `input` describes vertex
+    // buffers, if the vertex shader reads any.
     VkPipeline CreateGraphicsPipeline(VkRenderPass pass, VkPipelineLayout layout, const char* vertex,
-                                      const char* fragment, bool additive,
+                                      const char* fragment, Blend blend,
                                       const VkPipelineVertexInputStateCreateInfo* input) {
         VkShaderModule modules[2] = {CreateModule(vertex), CreateModule(fragment)};
 
@@ -748,19 +778,20 @@ struct Renderer::Impl {
         VkPipelineColorBlendAttachmentState blendAttachment{};
         blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        if (additive) {
+        if (blend != Blend::Replace) {
+            const bool add                      = blend == Blend::Add;
             blendAttachment.blendEnable         = VK_TRUE;
-            blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            blendAttachment.srcColorBlendFactor = add ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
+            blendAttachment.dstColorBlendFactor = add ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blendAttachment.colorBlendOp        = VK_BLEND_OP_ADD;
             blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
             blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             blendAttachment.alphaBlendOp        = VK_BLEND_OP_ADD;
         }
-        VkPipelineColorBlendStateCreateInfo blend{};
-        blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blend.attachmentCount = 1;
-        blend.pAttachments    = &blendAttachment;
+        VkPipelineColorBlendStateCreateInfo blendState{};
+        blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        blendState.attachmentCount = 1;
+        blendState.pAttachments    = &blendAttachment;
 
         const VkDynamicState             dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         VkPipelineDynamicStateCreateInfo dynamic{};
@@ -777,7 +808,7 @@ struct Renderer::Impl {
         gpci.pViewportState      = &viewport;
         gpci.pRasterizationState = &raster;
         gpci.pMultisampleState   = &multisample;
-        gpci.pColorBlendState    = &blend;
+        gpci.pColorBlendState    = &blendState;
         gpci.pDynamicState       = &dynamic;
         gpci.layout              = layout;
         gpci.renderPass          = pass;
@@ -814,32 +845,43 @@ struct Renderer::Impl {
     void CreateOverlay() {
         textLayout   = CreatePipelineLayout(sceneSetLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                             sizeof(TextPush));
-        textPipeline = CreateGraphicsPipeline(scenePass, textLayout, "text.vert", "text.frag", true, nullptr);
+        textPipeline = CreateGraphicsPipeline(scenePass, textLayout, "text.vert", "text.frag", Blend::Add, nullptr);
 
         // Particles are instances: each reads its position, size and light as vertex attributes.
         VkVertexInputBindingDescription   binding{0, sizeof(OverlayParticle), VK_VERTEX_INPUT_RATE_INSTANCE};
-        VkVertexInputAttributeDescription attributes[2] = {
+        VkVertexInputAttributeDescription attributes[3] = {
             {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
             {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
+            {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
         };
         VkPipelineVertexInputStateCreateInfo input{};
         input.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         input.vertexBindingDescriptionCount   = 1;
         input.pVertexBindingDescriptions      = &binding;
-        input.vertexAttributeDescriptionCount = 2;
+        input.vertexAttributeDescriptionCount = 3;
         input.pVertexAttributeDescriptions    = attributes;
         particleLayout   = CreatePipelineLayout(VK_NULL_HANDLE, VK_SHADER_STAGE_VERTEX_BIT, sizeof(ScenePush));
-        particlePipeline = CreateGraphicsPipeline(scenePass, particleLayout, "particle.vert", "particle.frag", true,
-                                                  &input);
+        particlePipeline = CreateGraphicsPipeline(scenePass, particleLayout, "particle.vert", "particle.frag",
+                                                  Blend::Add, &input);
 
-        VkDescriptorPoolSize       size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        earthSetLayout = CreateSetLayout(
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER},
+            VK_SHADER_STAGE_FRAGMENT_BIT);
+        earthLayout   = CreatePipelineLayout(earthSetLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(EarthPush));
+        earthPipeline = CreateGraphicsPipeline(scenePass, earthLayout, "fullscreen.vert", "earth.frag", Blend::Over,
+                                               nullptr);
+
+        // Two text sets of one image each, and the Earth's set of two.
+        VkDescriptorPoolSize       size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
         VkDescriptorPoolCreateInfo dpci{};
         dpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        dpci.maxSets       = 1;
+        dpci.maxSets       = 3;
         dpci.poolSizeCount = 1;
         dpci.pPoolSizes    = &size;
-        Check(vkCreateDescriptorPool(device, &dpci, nullptr, &textPool), "vkCreateDescriptorPool(text)");
-        textSet = AllocateSet(textPool, sceneSetLayout);
+        Check(vkCreateDescriptorPool(device, &dpci, nullptr, &overlayPool), "vkCreateDescriptorPool(overlay)");
+        creditText.set = AllocateSet(overlayPool, sceneSetLayout);
+        labelText.set  = AllocateSet(overlayPool, sceneSetLayout);
+        earthSet       = AllocateSet(overlayPool, earthSetLayout);
 
         const VkDeviceSize bytes = kMaxOverlayParticles * sizeof(OverlayParticle);
         for (int i = 0; i < kFramesInFlight; ++i) {
@@ -850,21 +892,21 @@ struct Renderer::Impl {
         }
     }
 
-    void DestroyText() {
-        vkDestroyImageView(device, textView, nullptr);
-        vkDestroyImage(device, textImage, nullptr);
-        vkFreeMemory(device, textMemory, nullptr);
-        textView   = VK_NULL_HANDLE;
-        textImage  = VK_NULL_HANDLE;
-        textMemory = VK_NULL_HANDLE;
+    void DestroyText(TextSlot& slot) {
+        vkDestroyImageView(device, slot.view, nullptr);
+        vkDestroyImage(device, slot.image, nullptr);
+        vkFreeMemory(device, slot.memory, nullptr);
+        slot.view   = VK_NULL_HANDLE;
+        slot.image  = VK_NULL_HANDLE;
+        slot.memory = VK_NULL_HANDLE;
     }
 
-    // A new credit's glyphs. Rare (one per credit), so the simplest safe replacement will do:
+    // New glyphs for `slot`. Rare (one per credit), so the simplest safe replacement will do:
     // wait for the GPU to finish with the old texture, then build the new one.
-    void UploadText(const TextImage& text) {
+    void UploadText(TextSlot& slot, const TextImage& text) {
         vkDeviceWaitIdle(device);
-        DestroyText();
-        textId = text.id;
+        DestroyText(slot);
+        slot.id = text.id;
         if (text.width <= 0 || text.height <= 0) return;
 
         const VkExtent2D   extent = {static_cast<uint32_t>(text.width), static_cast<uint32_t>(text.height)};
@@ -879,42 +921,145 @@ struct Renderer::Impl {
         vkUnmapMemory(device, stagingMemory);
 
         CreateImage(VK_FORMAT_R8_UNORM, extent, 1, false, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    textImage, textMemory);
+                    slot.image, slot.memory);
         OneShot([&](VkCommandBuffer cmd) {
-            ImageBarrier(cmd, textImage, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+            ImageBarrier(cmd, slot.image, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
             VkBufferImageCopy region{};
             region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             region.imageExtent      = {extent.width, extent.height, 1};
-            vkCmdCopyBufferToImage(cmd, staging, textImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-            ImageBarrier(cmd, textImage, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            vkCmdCopyBufferToImage(cmd, staging, slot.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            ImageBarrier(cmd, slot.image, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
         });
         vkDestroyBuffer(device, staging, nullptr);
         vkFreeMemory(device, stagingMemory, nullptr);
 
-        textView = CreateView(textImage, VK_FORMAT_R8_UNORM, VK_IMAGE_VIEW_TYPE_2D, 0, 1, 1);
-        WriteImage(textSet, 0, textView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
+        slot.view = CreateView(slot.image, VK_FORMAT_R8_UNORM, VK_IMAGE_VIEW_TYPE_2D, 0, 1, 1);
+        WriteImage(slot.set, 0, slot.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
+    }
+
+    void DestroyEarth() {
+        for (int i = 0; i < 2; ++i) {
+            vkDestroyImageView(device, earthViews[i], nullptr);
+            vkDestroyImage(device, earthImages[i], nullptr);
+            vkFreeMemory(device, earthMemory[i], nullptr);
+            earthViews[i]  = VK_NULL_HANDLE;
+            earthImages[i] = VK_NULL_HANDLE;
+            earthMemory[i] = VK_NULL_HANDLE;
+        }
+    }
+
+    // One sampled image with the mip chain `levels`, largest first.
+    void UploadMipmapped(const std::vector<std::vector<uint8_t>>& levels, int width, int height, VkFormat format,
+                         VkImage& image, VkDeviceMemory& memory, VkImageView& view) {
+        std::vector<VkDeviceSize> offsets;
+        VkDeviceSize              bytes = 0;
+        for (const auto& level : levels) {
+            bytes = (bytes + 3) & ~VkDeviceSize{3};  // copy offsets on a 4-byte boundary
+            offsets.push_back(bytes);
+            bytes += level.size();
+        }
+        VkBuffer       staging;
+        VkDeviceMemory stagingMemory;
+        CreateBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, stagingMemory);
+        void* mapped = nullptr;
+        Check(vkMapMemory(device, stagingMemory, 0, bytes, 0, &mapped), "vkMapMemory(earth)");
+        for (size_t l = 0; l < levels.size(); ++l) {
+            std::memcpy(static_cast<uint8_t*>(mapped) + offsets[l], levels[l].data(), levels[l].size());
+        }
+        vkUnmapMemory(device, stagingMemory);
+
+        const auto count = static_cast<uint32_t>(levels.size());
+        CreateImage(format, {static_cast<uint32_t>(width), static_cast<uint32_t>(height)}, count, false,
+                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, image, memory);
+        OneShot([&](VkCommandBuffer cmd) {
+            ImageBarrier(cmd, image, count, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                         VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            std::vector<VkBufferImageCopy> regions;
+            for (uint32_t l = 0; l < count; ++l) {
+                VkBufferImageCopy region{};
+                region.bufferOffset     = offsets[l];
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+                region.imageExtent      = {std::max(1u, static_cast<uint32_t>(width) >> l),
+                                           std::max(1u, static_cast<uint32_t>(height) >> l), 1};
+                regions.push_back(region);
+            }
+            vkCmdCopyBufferToImage(cmd, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count, regions.data());
+            ImageBarrier(cmd, image, count, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        });
+        vkDestroyBuffer(device, staging, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+        view = CreateView(image, format, VK_IMAGE_VIEW_TYPE_2D, 0, count, 1);
+    }
+
+    // The Earth's textures, the first time it is shown (and again only if they change).
+    void UploadEarth(const EarthImages& earth) {
+        vkDeviceWaitIdle(device);
+        DestroyEarth();
+        earthId = earth.id;
+        if (earth.width <= 0 || earth.day.empty() || earth.night.size() != earth.day.size()) return;
+        UploadMipmapped(earth.day, earth.width, earth.height, VK_FORMAT_R8G8B8A8_UNORM, earthImages[0],
+                        earthMemory[0], earthViews[0]);
+        UploadMipmapped(earth.night, earth.width, earth.height, VK_FORMAT_R8_UNORM, earthImages[1], earthMemory[1],
+                        earthViews[1]);
+        for (uint32_t i = 0; i < 2; ++i) {
+            WriteImage(earthSet, i, earthViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
+        }
+        app::Log("earth: %dx%d, %u levels uploaded", earth.width, earth.height, static_cast<unsigned>(earth.day.size()));
+    }
+
+    void RecordText(VkCommandBuffer cmd, const TextSlot& slot, const float rect[4], float scale, float alpha,
+                    float brightness, float block, const float split[4], const ScenePush& scene) {
+        TextPush p{};
+        std::memcpy(p.rect, rect, sizeof(p.rect));
+        p.params[0] = scale;
+        p.params[1] = alpha;
+        p.params[2] = block;
+        p.params[3] = scene.camRight[3];
+        p.more[0]   = scene.camPos[3];
+        p.more[1]   = brightness;
+        std::memcpy(p.split, split, sizeof(p.split));
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout, 0, 1, &slot.set, 0, nullptr);
+        vkCmdPushConstants(cmd, textLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        vkCmdDraw(cmd, 6, 1, 0, 0);
     }
 
     // Inside the scene pass, after the black hole. `scene` is that pass's camera.
     void RecordOverlay(VkCommandBuffer cmd, const Target& t, const Overlay& overlay, const ScenePush& scene) {
-        if (overlay.text && overlay.alpha > 0.0f && textView) {
-            TextPush p{};
-            std::memcpy(p.rect, overlay.rect, sizeof(p.rect));
-            p.params[0] = overlay.scale;
-            p.params[1] = overlay.alpha;
-            p.params[2] = overlay.block;
-            p.params[3] = scene.camRight[3];
-            p.more[0]   = scene.camPos[3];
-            p.more[1]   = overlay.brightness;
-            std::memcpy(p.split, overlay.split, sizeof(p.split));
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout, 0, 1, &textSet, 0, nullptr);
-            vkCmdPushConstants(cmd, textLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p),
-                               &p);
-            vkCmdDraw(cmd, 6, 1, 0, 0);
+        const EarthDraw& earth = overlay.earth;
+        if (earth.images && earth.alpha > 0.0f && earthViews[0]) {
+            EarthPush p{};
+            p.scene           = scene;
+            p.scene.camFwd[3] = static_cast<float>(t.extent.height);
+            for (int i = 0; i < 3; ++i) {
+                p.center[i] = earth.center[i];
+                p.north[i]  = earth.north[i];
+                p.east[i]   = earth.east[i];
+                p.light[i]  = earth.light[i];
+            }
+            p.center[3] = earth.radius;
+            p.north[3]  = earth.spin;
+            p.east[3]   = earth.block;
+            p.light[3]  = earth.alpha;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, earthPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, earthLayout, 0, 1, &earthSet, 0, nullptr);
+            vkCmdPushConstants(cmd, earthLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+        }
+        if (overlay.text && overlay.alpha > 0.0f && creditText.view) {
+            RecordText(cmd, creditText, overlay.rect, overlay.scale, overlay.alpha, overlay.brightness, overlay.block,
+                       overlay.split, scene);
+        }
+        if (overlay.label && overlay.labelAlpha > 0.0f && labelText.view) {
+            const float none[4] = {};
+            RecordText(cmd, labelText, overlay.labelRect, 1.0f, overlay.labelAlpha, overlay.brightness, 1.0f, none,
+                       scene);
         }
 
         const size_t count = std::min(overlay.particles.size(), kMaxOverlayParticles);
@@ -1248,7 +1393,9 @@ struct Renderer::Impl {
 
     void Draw(Target& t, double seconds, const CameraPose& camera, const Overlay* overlay) {
         if (t.stale && !BuildSwapchain(t)) return;
-        if (overlay && overlay->text && overlay->text->id != textId) UploadText(*overlay->text);
+        if (overlay && overlay->text && overlay->text->id != creditText.id) UploadText(creditText, *overlay->text);
+        if (overlay && overlay->label && overlay->label->id != labelText.id) UploadText(labelText, *overlay->label);
+        if (overlay && overlay->earth.images && overlay->earth.images->id != earthId) UploadEarth(*overlay->earth.images);
 
         Frame& f = t.frames[t.frameIndex];
         vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);

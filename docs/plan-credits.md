@@ -8,6 +8,16 @@ Status: built (2026-09-18). Changes after review:
 - Particles fade out halfway round the spiral onto the disk.
 - The typeface is Michroma (SIL OFL 1.1, the same one GoLLM uses), embedded with its licence. See
   THIRD_PARTY_NOTICES.md.
+- Before the break-up, the text shakes jerkily with its red, green and blue split apart, up to the
+  moment it pixelates.
+- A credit naming Sci-Man Dan holds while the Earth comes on. The Earth is a ray-cast sphere with
+  NASA's Blue Marble and Black Marble images, lit by the disk, and it is drawn round wherever it is
+  in the frame. It sweeps in 3.3 s after the credit lands, taking 3 s, well clear of the shadow
+  and the text. It is 1/5 to 1/3 of the shadow's size. The label "Earth (ROUND)" and a thumbs up
+  fades in halfway through the sweep. After a 2 s rest the Earth pixelates on the text's block
+  grid and breaks into particles coloured as it was drawn (EarthColor mirrors the shader). They
+  set off from the sphere itself and spiral into the hole. The credit's own shake and break-up
+  follow once the last of them has gone.
 
 ## What it does
 

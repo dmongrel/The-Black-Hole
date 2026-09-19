@@ -98,6 +98,15 @@ across to the disk on the hole's left and spirals with the disk's rotation towar
 edge. The particles shrink, warm in colour and fade out halfway round. Near the hole they are
 lensed by an approximate point-lens bend, and they vanish behind the shadow.
 
+A credit that names Sci-Man Dan brings on the Earth. While the credit holds, the Earth sweeps into
+the frame well clear of the hole, at a random fifth to a third of the hole's size. It is lit by
+the disk on the side facing the hole, and its cities glow on the night side. Halfway through its
+entrance a label appears beneath it: "Earth (ROUND)" and a thumbs up. It rests for a moment, then
+pixelates and streams into the hole like the letters, each particle carrying the Earth's colour
+where it came from. Only then does the credit shake and break up
+([`src/app/earth.cpp`](src/app/earth.cpp), [`shaders/earth.frag`](shaders/earth.frag); the
+images are NASA's).
+
 A second after the last particle of a credit is gone, the next credit comes in. After the last
 credit there is a minute's pause, then the list starts again. The credits play only on the
 primary monitor, and not in the preview.
@@ -161,8 +170,9 @@ disk at run time.
 
 ```
 shaders/            fullscreen.vert, blackhole.frag (the ray tracer), bloom_*.comp, composite.frag,
-                    text.* and particle.* (the credits)
-assets/             credits-default.txt, the built-in credits list; fonts/, Michroma and its licence
+                    text.*, particle.* and earth.frag (the credits)
+assets/             credits-default.txt, the built-in credits list; fonts/, Michroma and its licence;
+                    earth/, the NASA day and night images
 docs/               plan-credits.md, the credits design
 src/main.cpp        argument dispatch
 src/app/            window host, argument parsing, input rules, logging, settings dialog, credits
