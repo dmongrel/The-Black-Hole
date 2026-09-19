@@ -222,3 +222,10 @@ src/render/         Vulkan renderer, camera paths, skybox generator, embedded-sh
 third_party/volk/   Vulkan meta-loader
 tools/              embed_shaders.sh (SPIR-V -> C arrays)
 ```
+
+## License
+
+The Black Hole is released under the [MIT License](LICENSE). The third-party work built into it
+keeps its own terms: Michroma is under the SIL Open Font License 1.1, volk under the MIT License,
+and the NASA Earth imagery is in the public domain. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
